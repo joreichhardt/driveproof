@@ -5,6 +5,7 @@ const state = {
   pollTimer: null,
   activeJobsTimer: null,
   activeJobs: [],
+  selectedDiskJobs: [],
   smartChart: null,
   selectedMode: "quick",
   secureErase: null,
@@ -144,6 +145,36 @@ function getSelectedAppJob() {
 function getSelectedExternalJob() {
   if (!state.selectedDisk) return null;
   return state.activeJobs.find((job) => job.device === state.selectedDisk.name && String(job.id).startsWith("external-")) || null;
+}
+
+function getLatestCompletedSelectedJob() {
+  if (!state.selectedDiskJobs?.length) return null;
+  return state.selectedDiskJobs.find((job) => job.status === "done" && job.result?.report_id) || null;
+}
+
+async function loadSelectedDiskJobs() {
+  if (!state.selectedDisk) {
+    state.selectedDiskJobs = [];
+    return;
+  }
+  const payload = await fetchJson(`/api/tests?device=${encodeURIComponent(state.selectedDisk.name)}`);
+  state.selectedDiskJobs = payload.jobs || [];
+}
+
+function syncSelectedJobState() {
+  if (!state.selectedDisk) return;
+  const selectedAppJob = getSelectedAppJob();
+  if (selectedAppJob) {
+    if (state.currentJobId !== selectedAppJob.id) {
+      state.currentJobId = selectedAppJob.id;
+    }
+    renderSelectedJobStatus(selectedAppJob);
+    return;
+  }
+  if (state.currentJobId) {
+    state.currentJobId = null;
+  }
+  renderSelectedJobStatus(null);
 }
 
 function setControlsBusy() {
@@ -445,8 +476,14 @@ function updateModeSelection(mode) {
 
 function renderSelectedJobStatus(job) {
   if (!job) {
-    setJobProgress(0, "Aktiver Test");
-    byId("jobStatus").textContent = "Noch kein Test gestartet.";
+    const lastDoneJob = getLatestCompletedSelectedJob();
+    if (lastDoneJob?.result?.report_id) {
+      setJobProgress(100, MODE_LABELS[lastDoneJob.mode] || "Letzter Test");
+      byId("jobStatus").innerHTML = `abgeschlossen · <a href="/report/${lastDoneJob.result.report_id}" target="_blank">Letzten Bericht oeffnen</a>`;
+    } else {
+      setJobProgress(0, "Aktiver Test");
+      byId("jobStatus").textContent = "Noch kein Test gestartet.";
+    }
     if (state.selftest?.running) {
       const prefix = state.selftest.source === "app" ? "SMART Self-Test" : "Externer SMART Self-Test";
       byId("jobStatus").textContent = `Kein App-Test aktiv · ${prefix}: ${state.selftest.status_text}`;
@@ -503,12 +540,17 @@ async function refreshActiveJobs() {
     renderDiskList();
     if (state.selectedDisk) {
       const selectedAppJob = getSelectedAppJob();
-      if (selectedAppJob && !state.currentJobId) {
-        state.currentJobId = selectedAppJob.id;
-        renderSelectedJobStatus(selectedAppJob);
-        pollSelectedJob();
-      } else if (!state.currentJobId) {
-        renderSelectedJobStatus(selectedAppJob);
+      if (!selectedAppJob) {
+        await loadSelectedDiskJobs();
+      }
+      syncSelectedJobState();
+      if (selectedAppJob) {
+        if (!state.pollTimer) {
+          pollSelectedJob();
+        }
+      } else if (state.pollTimer) {
+        clearTimeout(state.pollTimer);
+        state.pollTimer = null;
       }
       setControlsBusy();
     }
@@ -531,10 +573,10 @@ async function selectDisk(name) {
   renderExternalSelftest(payload.selftest);
   renderOverview(payload.disk, payload.overview, payload.health);
   renderSmart(payload.smart);
-  state.currentJobId = getSelectedAppJob()?.id || null;
-  renderSelectedJobStatus(getSelectedAppJob());
+  await loadSelectedDiskJobs();
+  syncSelectedJobState();
   setControlsBusy();
-  if (state.currentJobId) {
+  if (state.currentJobId && !state.pollTimer) {
     pollSelectedJob();
   }
 }
@@ -588,6 +630,7 @@ async function pollSelectedJob() {
     byId("jobStatus").innerHTML = `done · <a href="/report/${payload.result.report_id}" target="_blank">Bericht oeffnen</a>`;
     setJobProgress(100, MODE_LABELS[payload.mode] || "Test");
     state.currentJobId = null;
+    state.pollTimer = null;
     await refreshActiveJobs();
     await loadReports();
     if (state.selectedDisk) await selectDisk(state.selectedDisk.name);
@@ -597,6 +640,7 @@ async function pollSelectedJob() {
   if (payload.status === "error") {
     byId("jobStatus").textContent = `error · ${payload.error}`;
     state.currentJobId = null;
+    state.pollTimer = null;
     await refreshActiveJobs();
     setControlsBusy();
     return;
