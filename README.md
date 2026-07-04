@@ -2,45 +2,47 @@
 
 [![Buy Me a Coffee](https://img.shields.io/badge/Buy%20Me%20a%20Coffee-support-ffdd00?logo=buymeacoffee&logoColor=000000)](https://buymeacoffee.com/joreichhardt)
 
-`DriveProof` ist eine Linux- und NixOS-orientierte Alternative zu CrystalDiskInfo und GSmartControl fuer den strukturierten Check gebrauchter HDDs, SSDs und NVMe-Laufwerke vor dem Verkauf.
+`DriveProof` is a Linux- and NixOS-oriented alternative to CrystalDiskInfo and GSmartControl for structured testing of used HDDs, SSDs, and NVMe drives before resale.
 
-Der Fokus liegt nicht nur auf SMART-Anzeige, sondern auf einem glaubwuerdigen Verkaufs-Workflow:
-- Laufwerke automatisch erkennen
-- passende Tests je nach Laufwerkstyp anbieten
-- mehrere Platten parallel pruefen
-- laufende Tests nach Reload wiederfinden
-- Berichte fuer Weiterverkauf erzeugen
-- als NixOS-Live-USB direkt im Kiosk-Modus booten
+The focus is not just SMART visibility, but a credible resale workflow:
+- detect drives automatically
+- offer matching tests based on drive type
+- test multiple drives in parallel
+- recover running jobs after reloads
+- generate resale-friendly reports
+- boot directly from a NixOS live USB in kiosk mode
 
-## Ziel
+## Purpose
 
-Die App ist fuer Werkbank-, Lager- und Server-Szenarien gebaut, in denen mehrere Laufwerke nacheinander oder parallel geprueft werden sollen, ohne dass erst ein volles Desktop-System eingerichtet werden muss.
+DriveProof is built for workshop, inventory, and server scenarios where multiple
+drives need to be checked one after another or in parallel without first setting
+up a full desktop environment.
 
-## Funktionen
+## Features
 
-- SMART-Auswertung ueber `smartctl`
-- menschenlesbare SMART-Attributtabelle
-- Gesundheits-Score mit Verkaufszusammenfassung
-- automatische Erkennung von `HDD`, `SSD` und `NVMe`
-- testtyp-abhaengige UI:
+- SMART evaluation via `smartctl`
+- human-readable SMART attribute table
+- health score with resale-oriented summary
+- automatic detection of `HDD`, `SSD`, and `NVMe`
+- drive-type-specific test UI:
   - HDD: `Quick`, `Deep Sample`, `SMART Extended`, `Full Read`
   - SSD/NVMe: `Quick`, `SMART Short`, `SMART Extended`, `Full Read`
-- parallele Jobs fuer mehrere Laufwerke
-- persistente Job-Datenbank fuer Reloads und Neustarts
-- Erkennung bereits extern gestarteter SMART-Selbsttests
-- sicheres Entfernen
-- optionale destruktive Loeschfunktionen mit Sicherheitsfreigaben
-- druckbare Berichte im Browser
-- NixOS-Live-Image mit automatischem App-Start und Chromium-Kiosk
+- parallel jobs across multiple drives
+- persistent job database for reloads and restarts
+- detection of externally started SMART self-tests
+- safe removal
+- optional destructive erase functions with explicit safety unlocks
+- printable browser reports
+- NixOS live image with automatic app start and Chromium kiosk mode
 
-## Lokale Ausfuehrung unter Ubuntu/Debian
+## Local Run on Ubuntu/Debian
 
-Voraussetzungen:
+Requirements:
 - Python 3.11+
 - `smartmontools`
 - `util-linux`
 - `udisks2`
-- optional `hdparm` fuer ATA Secure Erase
+- optional `hdparm` for ATA Secure Erase
 
 Installation:
 
@@ -58,28 +60,28 @@ Start:
 sudo ./.venv/bin/python app.py
 ```
 
-Dann im Browser:
+Then open in your browser:
 
 ```text
 http://127.0.0.1:5055
 ```
 
-## Typischer Ablauf
+## Typical Workflow
 
-1. Laufwerke per USB-Dock oder direkt im Server anschliessen.
-2. App mit Root-Rechten starten.
-3. Laufwerk waehlen.
-4. SMART-Daten und Uebersicht pruefen.
-5. Passenden Test auswaehlen.
-6. Laufende Jobs im rechten Bereich beobachten.
-7. Bericht oeffnen und fuer den Verkauf ablegen oder drucken.
+1. Attach drives via USB dock or directly inside a server.
+2. Start the app with root permissions.
+3. Select a drive.
+4. Review SMART data and the summary panel.
+5. Choose the appropriate test mode.
+6. Monitor running jobs in the right-hand panel.
+7. Open, print, or export the report for resale documentation.
 
 ## Nix Build
 
-Das Projekt enthaelt ein Nix-Setup fuer ein Live-ISO, das die App automatisch startet.
+The project includes a Nix setup for a live ISO that starts the app automatically.
 
-Voraussetzungen:
-- funktionierendes `nix` mit Flakes
+Requirements:
+- a working `nix` installation with Flakes enabled
 
 Build:
 
@@ -87,64 +89,71 @@ Build:
 nix build .#iso
 ```
 
-Ergebnis:
+Result:
 
 ```text
 ./result/iso/driveproof-live.iso
 ```
 
-## NixOS Live-USB
+## NixOS Live USB
 
-Das Live-Image ist fuer den direkten Einsatz auf Testsystemen gedacht:
-- Boot vom USB-Stick
-- automatischer Start der Flask-App
-- automatischer Chromium-Start im Kiosk-Modus
-- direkte Nutzung ohne lokale Installation
+The live image is intended for direct use on test systems:
+- boot from USB
+- automatic Flask app start
+- automatic Chromium launch in kiosk mode
+- direct usage without local installation
 
-Das ist besonders sinnvoll, wenn in einem Server oder Testsystem mehrere interne Platten geprueft werden sollen.
+This is especially useful when multiple internal drives need to be checked in a
+server or test machine.
 
-## GitHub Release und fertiger Build
+## GitHub Releases and Prebuilt Images
 
-Ein fertiger ISO-Build kann grundsaetzlich als GitHub-Release bereitgestellt werden. Der aktuelle rohe ISO-Build ist hier aber groesser als `2 GiB` und damit fuer einen direkten GitHub-Release-Upload unpraktisch beziehungsweise ueber der typischen Asset-Grenze.
+A prebuilt ISO can in principle be published as a GitHub release asset. The
+current raw ISO build is larger than `2 GiB`, which makes direct GitHub release
+upload impractical and likely above the usual asset limit.
 
-Praktische Optionen:
-- komprimiertes Release-Artefakt pruefen, zum Beispiel `.iso.xz`
-- externes Hosting fuer das rohe ISO nutzen
-- nur den Source-Stand auf GitHub halten und den Build lokal oder per CI erzeugen
+Practical options:
+- test a compressed artifact such as `.iso.xz`
+- host the raw ISO externally
+- keep only the source on GitHub and build locally or in CI
 
-## Projektpositionierung
+## Project Positioning
 
-Das Projekt ist keine 1:1-Kopie von CrystalDiskInfo oder GSmartControl. Es ist eher eine auf Linux und NixOS zugeschnittene Resale- und Batch-Test-Oberflaeche fuer:
-- SMART
-- Laufwerkstests
-- Verkaufsberichte
-- Live-USB-Betrieb
-- Mehrplatten-Szenarien
+DriveProof is not a 1:1 clone of CrystalDiskInfo or GSmartControl. It is better
+described as a Linux- and NixOS-oriented resale and batch-testing interface for:
+- SMART checks
+- drive testing
+- resale reports
+- live USB operation
+- multi-drive workflows
 
-## Lizenz
+## License
 
-Der DriveProof-Anwendungscode in diesem Repository steht unter der MIT-Lizenz:
+The DriveProof application code in this repository is licensed under the MIT License:
 
 - `LICENSE`
 
-Fuer das Live-ISO und die eingebundenen Systemwerkzeuge gelten zusaetzlich die
-jeweiligen Upstream-Lizenzen. Eine praktische Uebersicht liegt hier:
+The live ISO and bundled system tools remain subject to their respective upstream
+licenses. A practical overview is available here:
 
 - `THIRD_PARTY_LICENSES.md`
 
-Im Live-ISO sind diese Dateien sowohl ueber die App als auch unter
-`/etc/driveproof/` verfuegbar.
+Inside the live ISO, these files are available both through the app and under:
+
+```text
+/etc/driveproof/
+```
 
 ## Commercial Services
 
-DriveProof ist bewusst so aufgebaut, dass kommerzielle Services darum herum
-einfach moeglich sind, zum Beispiel:
+DriveProof is intentionally structured to support commercial service offerings,
+for example:
 
-- Custom branding
-- Build service
-- White-label live images
-- Hardware-specific kiosk builds
-- Support and maintenance
+- custom branding
+- build service
+- white-label live images
+- hardware-specific kiosk builds
+- support and maintenance
 
 Details:
 
@@ -152,6 +161,6 @@ Details:
 
 ## Support
 
-Wenn dir das Projekt nuetzt, kannst du es hier unterstuetzen:
+If DriveProof is useful to you, you can support the project here:
 
 - https://buymeacoffee.com/joreichhardt
