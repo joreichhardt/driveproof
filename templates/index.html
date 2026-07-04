@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="de">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>HDD Resale Tester</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=20260704-ui6">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">USB-Dock Diagnose</p>
+          <h1>HDD Resale Tester</h1>
+          <p class="topbar-copy">SMART, Lesetest, Bericht und sicheres Entfernen fuer gebrauchte HDDs.</p>
+        </div>
+        <div class="topbar-actions">
+          <div class="theme-switch" aria-label="Theme">
+            <button id="themeSystem" class="theme-button active">System</button>
+            <button id="themeDark" class="theme-button">Dark</button>
+            <button id="themeLight" class="theme-button">Light</button>
+          </div>
+          <button id="refreshButton" class="icon-button">Aktualisieren</button>
+        </div>
+      </header>
+
+      <main class="layout">
+        <section class="panel panel-list">
+          <div class="section-head">
+            <h2>Laufwerke</h2>
+            <p id="envHint" class="muted"></p>
+          </div>
+          <div class="settings-box compact">
+            <label class="check-row">
+              <input id="showInternalDisks" type="checkbox">
+              <span>Interne Laufwerke anzeigen</span>
+            </label>
+          </div>
+          <div id="diskList" class="disk-list"></div>
+        </section>
+
+        <section class="panel panel-detail">
+          <div id="emptyState" class="empty-state">
+            <h2>Keine Platte ausgewaehlt</h2>
+            <p>Links ein Laufwerk auswaehlen, dann SMART-Daten pruefen und einen Lesetest starten.</p>
+          </div>
+
+          <div id="detailView" class="hidden">
+            <div class="diagnostic-header">
+              <div class="disk-identity">
+                <p class="eyebrow">Laufwerksinformation</p>
+                <h2 id="diskTitle" class="drive-name"></h2>
+                <div id="diskMeta" class="muted"></div>
+              </div>
+              <div class="health-box">
+                <div class="health-bubble">
+                  <div id="healthGrade" class="health-grade">Unbekannt</div>
+                  <div id="healthScore" class="health-score">--</div>
+                </div>
+                <span id="smartBadge" class="badge">Unbekannt</span>
+              </div>
+            </div>
+
+            <div class="content-grid">
+              <div class="panel inset">
+                <div class="section-head">
+                  <h2>Uebersicht</h2>
+                </div>
+                <div id="overviewGrid" class="info-grid"></div>
+                <ul id="healthNotes" class="notes"></ul>
+              </div>
+
+              <div class="panel inset">
+                <div class="section-head">
+                  <h2>Test</h2>
+                </div>
+                <div id="testSelector" class="test-selector"></div>
+                <div id="testModeHint" class="muted">Kurzer Stichproben-Lesetest fuer Vorsortierung.</div>
+                <div class="stack-buttons">
+                  <button id="runTestButton" class="run-button">Run Test</button>
+                  <button id="safeRemoveButton" class="safe-remove-button">Sicher entfernen</button>
+                </div>
+                <div class="job-panel">
+                  <div class="job-panel-head">
+                    <strong id="jobStatusLabel">Status</strong>
+                    <span id="jobPercent" class="job-percent">0%</span>
+                  </div>
+                  <div class="progress-track">
+                    <div id="jobProgressBar" class="progress-bar" style="width: 0%"></div>
+                  </div>
+                  <div id="jobStatus" class="job-box muted">Noch kein Test gestartet.</div>
+                </div>
+                <div id="externalSelftestBox" class="job-box muted hidden"></div>
+                <button id="abortSelftestButton" class="safe-remove-button hidden">SMART Self-Test abbrechen</button>
+                <div class="settings-box">
+                  <label class="check-row">
+                    <input id="enableDestructive" type="checkbox">
+                    <span>Loeschfunktionen freischalten</span>
+                  </label>
+                  <label class="check-row">
+                    <input id="allowInternalErase" type="checkbox">
+                    <span>Loeschen auch auf internen Laufwerken erlauben</span>
+                  </label>
+                </div>
+                <div id="dangerZone" class="danger-zone hidden">
+                  <div class="danger-title">Sicheres Loeschen</div>
+                  <div class="muted">1x Nullschreiben. Destruktiv. Zur Bestaetigung Seriennummer oder Device-Pfad eingeben.</div>
+                  <input id="eraseConfirmInput" class="confirm-input" type="text" placeholder="/dev/sdX oder Seriennummer">
+                  <button id="eraseButton" class="erase-button">Loeschen starten</button>
+                  <div id="secureEraseHint" class="muted">ATA Secure Erase wird geprueft.</div>
+                  <button id="secureEraseButton" class="erase-button secondary">ATA Secure Erase</button>
+                </div>
+                <div class="live-jobs-panel">
+                  <div class="section-head">
+                    <h2>Laufende Jobs</h2>
+                  </div>
+                  <div id="activeJobsList" class="active-jobs-list"></div>
+                </div>
+              </div>
+            </div>
+
+            <div class="content-grid lower-grid">
+              <div class="panel inset">
+                <div class="section-head">
+                  <h2>SMART Attribute</h2>
+                </div>
+                <canvas id="smartChart" height="160"></canvas>
+                <div id="smartTable" class="smart-table smart-table-full"></div>
+              </div>
+
+              <div class="panel inset">
+                <div class="section-head">
+                  <h2>Berichte</h2>
+                </div>
+                <div id="reportsList" class="reports-list"></div>
+              </div>
+            </div>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <script src="{{ url_for('static', filename='app.js') }}?v=20260704-ui6"></script>
+  </body>
+  </html>

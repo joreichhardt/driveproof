@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="de">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Bericht {{ report.report_id }}</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+  </head>
+  <body class="report-body">
+    <main class="report-page">
+      <header class="report-sheet-header">
+        <div>
+          <p class="eyebrow">Drive Health Report</p>
+          <h1>{{ report.device.vendor }} {{ report.device.model }}</h1>
+          <p class="muted">{{ report.device.path }} | Serial {{ report.overview.serial }}</p>
+        </div>
+      </header>
+
+      <section class="report-diagnostic">
+        <div class="report-health-box">
+          <div class="report-health-label">Health Status</div>
+          <div class="report-health-grade">{{ report.health.grade }}</div>
+          <div class="report-health-score">{{ report.health.score }}/100</div>
+        </div>
+        <div class="report-temp-box">
+          <div class="report-health-label">Temperature</div>
+          <div class="report-temp-value">{{ report.overview.temperature_c }} C</div>
+        </div>
+      </section>
+
+      <section class="panel inset report-summary-panel">
+        <h2>Verkaufsrelevante Aussage</h2>
+        <div class="summary-item">
+          <span>Bewertung</span>
+          <strong>{{ report.sales_summary.verdict if report.sales_summary else report.health.summary }}</strong>
+        </div>
+        <div class="summary-item">
+          <span>Nachweis</span>
+          <strong>{{ report.test.label if report.test.label else report.test.type }}</strong>
+        </div>
+        <p class="muted">{{ report.sales_summary.test_claim if report.sales_summary else '' }}</p>
+      </section>
+
+      <section class="panel inset report-summary-panel">
+        <h2>Wichtige Daten fuer gebrauchte Festplatten</h2>
+        <div class="report-summary-grid">
+          <div class="summary-item">
+            <span>Laufzeit</span>
+            <strong>{{ report.overview.power_on_hours }} h</strong>
+          </div>
+          <div class="summary-item">
+            <span>Start/Stop</span>
+            <strong>{{ report.overview.start_stop_count }}</strong>
+          </div>
+          <div class="summary-item">
+            <span>Reallocated Sectors</span>
+            <strong>{{ report.overview.reallocated }}</strong>
+          </div>
+          <div class="summary-item">
+            <span>Pending Sectors</span>
+            <strong>{{ report.overview.pending }}</strong>
+          </div>
+          <div class="summary-item">
+            <span>Offline Uncorrectable</span>
+            <strong>{{ report.overview.offline_uncorrectable }}</strong>
+          </div>
+          <div class="summary-item">
+            <span>Temperatur</span>
+            <strong>{{ report.overview.temperature_c }} C</strong>
+          </div>
+          <div class="summary-item">
+            <span>CRC Errors</span>
+            <strong>{{ report.overview.crc_errors }}</strong>
+          </div>
+          <div class="summary-item">
+            <span>Read Test</span>
+            <strong>{{ report.test.average_throughput_mib_s if report.test.average_throughput_mib_s else 'n/a' }} MiB/s</strong>
+          </div>
+        </div>
+      </section>
+
+      <section class="report-spec-grid">
+        <div class="report-spec"><span>Model</span><strong>{{ report.device.model or 'n/a' }}</strong></div>
+        <div class="report-spec"><span>Firmware</span><strong>{{ report.smart.payload.firmware_version if report.smart.payload else 'n/a' }}</strong></div>
+        <div class="report-spec"><span>Capacity</span><strong>{{ report.overview.capacity_gb }} GB</strong></div>
+        <div class="report-spec"><span>Interface</span><strong>{{ report.overview.interface }}</strong></div>
+        <div class="report-spec"><span>Power-On Hours</span><strong>{{ report.overview.power_on_hours }}</strong></div>
+        <div class="report-spec"><span>Power Cycles</span><strong>{{ report.smart.payload.power_cycle_count if report.smart.payload else 'n/a' }}</strong></div>
+        <div class="report-spec"><span>Test Type</span><strong>{{ report.test.label if report.test.label else report.test.type }}</strong></div>
+        <div class="report-spec"><span>Created</span><strong>{{ report.generated_at }}</strong></div>
+      </section>
+
+      <section class="report-grid">
+        <article class="panel inset">
+          <h2>Assessment</h2>
+          <p>{{ report.health.summary }}</p>
+          <ul class="notes">
+            {% for note in report.health.notes %}
+            <li>{{ note }}</li>
+            {% endfor %}
+          </ul>
+        </article>
+
+        <article class="panel inset">
+          <h2>Read Test</h2>
+          <p>{{ report.test.buyer_claim if report.test.buyer_claim else '' }}</p>
+          {% if report.test.average_throughput_mib_s %}
+          <p>Average Throughput: {{ report.test.average_throughput_mib_s }} MiB/s</p>
+          {% endif %}
+          {% if report.test.duration_s %}
+          <p>Duration: {{ report.test.duration_s }} s</p>
+          {% endif %}
+          {% if report.test.self_test_status %}
+          <p>Self-Test Status: {{ report.test.self_test_status }}</p>
+          {% endif %}
+          {% if report.test.bytes_read %}
+          <p>Bytes Read: {{ report.test.bytes_read }}</p>
+          {% endif %}
+          {% if report.test.segments %}
+          <p>Segments Tested: {{ report.test.segments|length }}</p>
+          {% endif %}
+        </article>
+      </section>
+
+      <section class="panel inset">
+        <h2>SMART Attribute Table</h2>
+        <div class="smart-table smart-table-full report-smart-table">
+          <div class="smart-header"><span></span><span>ID</span><span>Attribut</span><span>Current</span><span>Worst</span><span>Thresh</span><span>Wert</span></div>
+          {% for row in report.smart_rows %}
+          <div class="smart-row full">
+            <span class="row-indicator {{ row.severity }}"></span>
+            <span>{{ row.id }}</span>
+            <span>{{ row.label }}</span>
+            <span>{{ row.value }}</span>
+            <span>{{ row.worst }}</span>
+            <span>{{ row.thresh }}</span>
+            <span>{{ row.human }} <span class="smart-raw">({{ row.raw }})</span></span>
+          </div>
+          {% endfor %}
+        </div>
+      </section>
+    </main>
+  </body>
+  </html>
