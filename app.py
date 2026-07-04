@@ -161,17 +161,17 @@ def classify_disk_kind(disk: dict[str, Any]) -> str:
 
 MODE_METADATA = {
     "quick": {
-        "label": "Quick",
+        "label": "Schnelltest",
         "hint": "Kurzer Stichproben-Lesetest fuer Vorsortierung.",
         "destructive": False,
     },
     "deep_sample": {
-        "label": "Deep Sample",
+        "label": "Tiefer Lesetest",
         "hint": "Verteilter Lesetest ueber die Platte. Fuer HDDs sinnvoller als fuer SSD/NVMe.",
         "destructive": False,
     },
     "smart_short": {
-        "label": "SMART Short",
+        "label": "SMART Kurztest",
         "hint": "Kurzer Laufwerks-Selbsttest. Gut fuer SSD/NVMe und schnelle Vorpruefung.",
         "destructive": False,
     },
@@ -181,7 +181,7 @@ MODE_METADATA = {
         "destructive": False,
     },
     "full": {
-        "label": "Full Read",
+        "label": "Vollscan",
         "hint": "Kompletter Lesetest. Dauert lange und ist fuer den Verkauf die staerkste Lesetest-Aussage.",
         "destructive": False,
     },
@@ -536,6 +536,10 @@ def smart_human_value(name: str, raw: Any) -> str:
     if name == "Power_On_Hours":
         return format_duration_hours(value)
     if name == "Temperature_Celsius":
+        if isinstance(raw, str):
+            match = re.search(r"(-?\d+)", raw)
+            if match:
+                return f"{match.group(1)} C"
         return f"{value} C" if value is not None else "n/a"
     if name == "Percentage_Used":
         return f"{value} %" if value is not None else "n/a"
@@ -607,7 +611,7 @@ def normalized_smart_rows(smart_payload: dict[str, Any]) -> list[dict[str, Any]]
                 "worst": row.get("worst"),
                 "thresh": row.get("thresh"),
                 "raw": row.get("raw", {}).get("value"),
-                "human": smart_human_value(row.get("name"), row.get("raw", {}).get("value")),
+                "human": smart_human_value(row.get("name"), row.get("raw", {}).get("string") or row.get("raw", {}).get("value")),
                 "severity": smart_severity(row.get("name"), row.get("raw", {}).get("value")),
                 "when_failed": row.get("when_failed") or "",
             }
@@ -636,6 +640,10 @@ def smart_overview(smart: dict[str, Any], disk: dict[str, Any]) -> dict[str, str
         value = row_map.get(name, {}).get("raw", fallback)
         return str(value if value not in (None, "") else fallback)
 
+    def human(name: str, fallback: str = "n/a") -> str:
+        value = row_map.get(name, {}).get("human", fallback)
+        return str(value if value not in (None, "") else fallback)
+
     capacity_gb = round(disk.get("size_bytes", 0) / 1024 / 1024 / 1024, 1)
     return {
         "interface": disk.get("transport") or "unknown",
@@ -643,7 +651,7 @@ def smart_overview(smart: dict[str, Any], disk: dict[str, Any]) -> dict[str, str
         "serial": disk.get("serial") or "n/a",
         "power_on_hours": raw("Power_On_Hours"),
         "start_stop_count": raw("Start_Stop_Count", "n/a"),
-        "temperature_c": raw("Temperature_Celsius"),
+        "temperature_c": human("Temperature_Celsius", str(payload.get("temperature", {}).get("current", "n/a"))),
         "reallocated": raw("Reallocated_Sector_Ct", "0"),
         "pending": raw("Current_Pending_Sector", "0"),
         "offline_uncorrectable": raw("Offline_Uncorrectable", "0"),
@@ -1494,6 +1502,8 @@ def api_disk_detail(device_name: str):
             {
                 "disk": disk,
                 "smart": smart,
+                "overview": smart_overview(smart, disk),
+                "smart_rows": normalized_smart_rows((smart.get("payload") or {})),
                 "health": health,
                 "erase": erase,
                 "selftest": selftest,

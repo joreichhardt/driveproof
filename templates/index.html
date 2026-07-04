@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>DriveProof</title>
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=20260704-ui7">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=20260704-ui8">
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   </head>
   <body>
@@ -13,7 +13,7 @@
         <div>
           <p class="eyebrow">Drive Diagnostics</p>
           <h1>DriveProof</h1>
-          <p class="topbar-copy">SMART, Lesetest, Bericht und sicheres Entfernen fuer gebrauchte HDDs.</p>
+          <p class="topbar-copy">SMART-Pruefung, Lesetests und Verkaufsberichte fuer HDDs, SSDs und NVMe-Laufwerke.</p>
         </div>
         <div class="topbar-actions">
           <div class="theme-switch" aria-label="Theme">
@@ -75,15 +75,18 @@
                 <div class="section-head">
                   <h2>Test</h2>
                 </div>
+                <div class="test-block">
+                  <div class="block-label">Testauswahl</div>
                 <div id="testSelector" class="test-selector"></div>
                 <div id="testModeHint" class="muted">Kurzer Stichproben-Lesetest fuer Vorsortierung.</div>
+                </div>
                 <div class="stack-buttons">
-                  <button id="runTestButton" class="run-button">Run Test</button>
+                  <button id="runTestButton" class="run-button">Test starten</button>
                   <button id="safeRemoveButton" class="safe-remove-button">Sicher entfernen</button>
                 </div>
                 <div class="job-panel">
                   <div class="job-panel-head">
-                    <strong id="jobStatusLabel">Status</strong>
+                    <strong id="jobStatusLabel">Aktiver Test</strong>
                     <span id="jobPercent" class="job-percent">0%</span>
                   </div>
                   <div class="progress-track">
@@ -113,7 +116,7 @@
                 </div>
                 <div class="live-jobs-panel">
                   <div class="section-head">
-                    <h2>Laufende Jobs</h2>
+                    <h2>Weitere laufende Jobs</h2>
                   </div>
                   <div id="activeJobsList" class="active-jobs-list"></div>
                 </div>
@@ -146,6 +149,6 @@
       </footer>
     </div>
 
-    <script src="{{ url_for('static', filename='app.js') }}?v=20260704-ui7"></script>
+    <script src="{{ url_for('static', filename='app.js') }}?v=20260704-ui8"></script>
   </body>
   </html>

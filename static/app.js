@@ -29,14 +29,29 @@ const MODE_HINTS = {
 };
 
 const MODE_LABELS = {
-  quick: "Quick",
-  deep_sample: "Deep Sample",
-  smart_short: "SMART Short",
+  quick: "Schnelltest",
+  deep_sample: "Tiefer Lesetest",
+  smart_short: "SMART Kurztest",
   smart_extended: "SMART Extended",
-  full: "Full Read",
+  full: "Vollscan",
   erase_zero: "Nullschreiben",
   secure_erase_ata: "ATA Secure Erase",
   smart_extended_external: "Externer SMART Test",
+};
+
+const OVERVIEW_LABELS = {
+  summary: "Status",
+  kind: "Typ",
+  interface: "Interface",
+  capacity: "Kapazitaet",
+  serial: "Seriennummer",
+  powerOnHours: "Betriebsstunden",
+  temperature: "Temperatur",
+  reallocated: "Neu zugewiesen",
+  pending: "Ausstehend",
+  offlineUncorrectable: "Nicht korrigierbar",
+  crcErrors: "CRC-Fehler",
+  mediaErrors: "Medienfehler",
 };
 
 function formatBytes(bytes) {
@@ -276,8 +291,14 @@ function renderExternalSelftest(selftest) {
   const box = byId("externalSelftestBox");
   const button = byId("abortSelftestButton");
   if (selftest?.running) {
+    if (selftest.source === "app") {
+      box.classList.add("hidden");
+      box.textContent = "";
+      button.classList.toggle("hidden", !selftest.abort_supported);
+      return;
+    }
     box.classList.remove("hidden");
-    const prefix = selftest.source === "app" ? "SMART Self-Test laeuft" : "Externer SMART Self-Test laeuft";
+    const prefix = "Externer SMART Self-Test laeuft";
     box.textContent = `${prefix} · ${selftest.status_text}`;
     button.classList.toggle("hidden", !selftest.abort_supported);
   } else {
@@ -287,26 +308,20 @@ function renderExternalSelftest(selftest) {
   }
 }
 
-function renderOverview(disk, smart, health) {
-  const payload = smart.payload || {};
-  const nvme = payload.nvme_smart_health_information_log || {};
-  const rows = smartRows(payload).length ? smartRows(payload) : fallbackSmartRows(payload);
-  const rowMap = Object.fromEntries(rows.map((row) => [row.name, row]));
-  const raw = (name, fallback = "n/a") => rowMap[name]?.raw?.value ?? fallback;
-
+function renderOverview(disk, overview, health) {
   const items = [
-    ["Health", health.summary || "n/a"],
-    ["Typ", disk.kind || "unknown"],
-    ["Interface", disk.transport || "unknown"],
-    ["Kapazitaet", formatBytes(disk.size_bytes)],
-    ["Seriennummer", disk.serial || "n/a"],
-    ["Power-On Hours", raw("Power_On_Hours", payload.power_on_time?.hours ?? "n/a")],
-    ["Temperatur", `${raw("Temperature_Celsius", payload.temperature?.current ?? "n/a")} C`],
-    ["Reallocated", raw("Reallocated_Sector_Ct", "0")],
-    ["Pending", raw("Current_Pending_Sector", "0")],
-    ["Offline Uncorrectable", raw("Offline_Uncorrectable", "0")],
-    ["CRC Errors", raw("UDMA_CRC_Error_Count", "0")],
-    ["Media Errors", nvme.media_errors ?? "n/a"],
+    [OVERVIEW_LABELS.summary, health.summary || "n/a"],
+    [OVERVIEW_LABELS.kind, disk.kind || "unknown"],
+    [OVERVIEW_LABELS.interface, overview?.interface || disk.transport || "unknown"],
+    [OVERVIEW_LABELS.capacity, formatBytes(disk.size_bytes)],
+    [OVERVIEW_LABELS.serial, overview?.serial || disk.serial || "n/a"],
+    [OVERVIEW_LABELS.powerOnHours, overview?.power_on_hours || "n/a"],
+    [OVERVIEW_LABELS.temperature, overview?.temperature_c || "n/a"],
+    [OVERVIEW_LABELS.reallocated, overview?.reallocated || "0"],
+    [OVERVIEW_LABELS.pending, overview?.pending || "0"],
+    [OVERVIEW_LABELS.offlineUncorrectable, overview?.offline_uncorrectable || "0"],
+    [OVERVIEW_LABELS.crcErrors, overview?.crc_errors || "0"],
+    [OVERVIEW_LABELS.mediaErrors, smart.payload?.nvme_smart_health_information_log?.media_errors ?? "n/a"],
   ];
 
   byId("overviewGrid").innerHTML = items
@@ -430,7 +445,7 @@ function updateModeSelection(mode) {
 
 function renderSelectedJobStatus(job) {
   if (!job) {
-    setJobProgress(0, "Status");
+    setJobProgress(0, "Aktiver Test");
     byId("jobStatus").textContent = "Noch kein Test gestartet.";
     if (state.selftest?.running) {
       const prefix = state.selftest.source === "app" ? "SMART Self-Test" : "Externer SMART Self-Test";
@@ -449,11 +464,13 @@ function renderActiveJobs() {
   const container = byId("activeJobsList");
   container.innerHTML = "";
   if (!state.activeJobs.length) {
-    container.innerHTML = `<div class="job-box muted">Keine laufenden Jobs.</div>`;
+    container.innerHTML = `<div class="job-box muted">Keine weiteren laufenden Jobs.</div>`;
     return;
   }
 
-  state.activeJobs.forEach((job) => {
+  state.activeJobs
+    .filter((job) => !state.selectedDisk || job.device !== state.selectedDisk.name || String(job.id).startsWith("external-"))
+    .forEach((job) => {
     const percent = Math.round((job.progress || 0) * 100);
     const element = document.createElement("div");
     element.className = "active-job-card";
@@ -472,6 +489,10 @@ function renderActiveJobs() {
     }
     container.appendChild(element);
   });
+
+  if (!container.children.length) {
+    container.innerHTML = `<div class="job-box muted">Keine weiteren laufenden Jobs.</div>`;
+  }
 }
 
 async function refreshActiveJobs() {
@@ -508,7 +529,7 @@ async function selectDisk(name) {
   renderModeSelector(payload.modes || payload.disk.modes || []);
   renderEraseOptions(payload.disk, payload.erase);
   renderExternalSelftest(payload.selftest);
-  renderOverview(payload.disk, payload.smart, payload.health);
+  renderOverview(payload.disk, payload.overview, payload.health);
   renderSmart(payload.smart);
   state.currentJobId = getSelectedAppJob()?.id || null;
   renderSelectedJobStatus(getSelectedAppJob());

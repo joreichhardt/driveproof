@@ -84,7 +84,7 @@ body[data-theme="light"] {
 .topbar {
   grid-template-columns: 1fr auto;
   align-items: end;
-  margin-bottom: 26px;
+  margin-bottom: 18px;
 }
 
 .topbar-actions {
@@ -120,15 +120,17 @@ body[data-theme="light"] {
 }
 
 .topbar-copy {
-  margin: 10px 0 0;
+  margin: 8px 0 0;
   color: var(--muted);
   font-size: 14px;
+  max-width: 760px;
 }
 
 .layout {
   display: grid;
   grid-template-columns: 360px 1fr;
   gap: 22px;
+  align-items: start;
 }
 
 .legal-layout {
@@ -169,14 +171,14 @@ body[data-theme="light"] {
 }
 
 .lower-grid {
-  margin-top: 22px;
+  margin-top: 18px;
 }
 
 .diagnostic-header {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 260px;
   gap: 22px;
-  margin-bottom: 22px;
+  margin-bottom: 18px;
 }
 
 .disk-identity,
@@ -188,10 +190,10 @@ body[data-theme="light"] {
 }
 
 .disk-identity {
-  min-height: 180px;
+  min-height: 132px;
   display: grid;
   align-content: start;
-  gap: 10px;
+  gap: 8px;
 }
 
 .health-box {
@@ -281,7 +283,7 @@ h2 {
   padding: 0 10px;
   border-radius: 999px;
   border: 1px solid rgba(148, 163, 184, 0.14);
-  background: rgba(51, 65, 85, 0.35);
+  background: rgba(127, 127, 127, 0.08);
   color: var(--text);
   font-size: 12px;
   font-weight: 600;
@@ -328,7 +330,7 @@ h2 {
 .run-button,
 .safe-remove-button,
 .erase-button {
-  background: linear-gradient(180deg, rgba(30, 41, 59, 0.82), rgba(15, 23, 42, 0.88));
+  background: linear-gradient(180deg, rgba(48, 51, 56, 0.6), rgba(28, 30, 34, 0.72));
   color: var(--text);
 }
 
@@ -350,7 +352,7 @@ body[data-theme="light"] .mode-button.active {
 
 .disk-card {
   text-align: left;
-  padding: 15px 16px;
+  padding: 14px 15px;
   cursor: pointer;
   transition: transform 140ms ease, border-color 140ms ease, background 140ms ease, box-shadow 140ms ease;
 }
@@ -385,7 +387,7 @@ body[data-theme="light"] .erase-button:hover {
 .disk-card-title {
   font-size: 15px;
   font-weight: 600;
-  margin-bottom: 8px;
+  margin-bottom: 6px;
 }
 
 .disk-card-head {
@@ -420,6 +422,18 @@ body[data-theme="light"] .erase-button:hover {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 10px;
+}
+
+.test-block {
+  display: grid;
+  gap: 10px;
+}
+
+.block-label {
+  color: var(--muted);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
 }
 
 .warn {
@@ -461,6 +475,7 @@ body[data-theme="light"] .safe-remove-button {
 
 .stack-buttons {
   display: grid;
+  gap: 10px;
 }
 
 .settings-box {
@@ -548,6 +563,10 @@ body[data-theme="light"] .erase-button.secondary {
   gap: 12px;
 }
 
+#externalSelftestBox {
+  margin-top: 12px;
+}
+
 body[data-theme="light"] .job-panel,
 body[data-theme="light"] .disk-identity,
 body[data-theme="light"] .health-box {
@@ -587,10 +606,16 @@ body[data-theme="light"] .health-box {
   display: grid;
   gap: 10px;
   cursor: pointer;
+  transition: border-color 140ms ease, transform 140ms ease, box-shadow 140ms ease;
 }
 
 body[data-theme="light"] .active-job-card {
   background: rgba(255, 255, 255, 0.86);
+}
+
+.active-job-card:hover {
+  border-color: rgba(52, 211, 153, 0.22);
+  transform: translateY(-1px);
 }
 
 .active-job-head {
@@ -771,6 +796,7 @@ body[data-theme="light"] .confirm-input {
   padding: 13px 14px;
   display: grid;
   gap: 6px;
+  min-height: 74px;
 }
 
 .info-cell span,
