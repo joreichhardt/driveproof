@@ -77,7 +77,13 @@
           </div>
           <div class="summary-item">
             <span>Read Test</span>
-            <strong>{{ report.test.average_throughput_mib_s if report.test.average_throughput_mib_s else 'n/a' }} MiB/s</strong>
+            <strong>
+              {% if report.test.average_throughput_mib_s %}
+              {{ report.test.average_throughput_mib_s }} MiB/s
+              {% else %}
+              Nicht zutreffend
+              {% endif %}
+            </strong>
           </div>
         </div>
       </section>
