@@ -68,6 +68,13 @@ function formatBytes(bytes) {
   return `${value.toFixed(1)} ${unit}`;
 }
 
+function formatTemperature(value) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return "n/a";
+  const fahrenheit = Math.round((numeric * 9) / 5 + 32);
+  return `${numeric} °C / ${fahrenheit} °F`;
+}
+
 function byId(id) {
   return document.getElementById(id);
 }
@@ -242,7 +249,7 @@ function fallbackSmartRows(payload) {
   if (!nvme) return [];
   return [
     { id: "-", name: "Power_On_Hours", label: "Betriebsstunden", value: "-", worst: "-", thresh: "-", raw: { value: payload?.power_on_time?.hours ?? 0 }, human: `${payload?.power_on_time?.hours ?? 0} h` },
-    { id: "-", name: "Temperature_Celsius", label: "Temperatur", value: "-", worst: "-", thresh: "-", raw: { value: payload?.temperature?.current ?? 0 }, human: `${payload?.temperature?.current ?? 0} C` },
+    { id: "-", name: "Temperature_Celsius", label: "Temperatur", value: "-", worst: "-", thresh: "-", raw: { value: payload?.temperature?.current ?? 0 }, human: formatTemperature(payload?.temperature?.current ?? 0) },
     { id: "-", name: "Media_Errors", label: "Medienfehler", value: "-", worst: "-", thresh: "-", raw: { value: nvme.media_errors ?? 0 }, human: `${nvme.media_errors ?? 0}` },
     { id: "-", name: "Unsafe_Shutdowns", label: "Unsichere Abschaltungen", value: "-", worst: "-", thresh: "-", raw: { value: nvme.unsafe_shutdowns ?? 0 }, human: `${nvme.unsafe_shutdowns ?? 0}` },
     { id: "-", name: "Percentage_Used", label: "Abnutzung", value: "-", worst: "-", thresh: "-", raw: { value: nvme.percentage_used ?? 0 }, human: `${nvme.percentage_used ?? 0} %` },

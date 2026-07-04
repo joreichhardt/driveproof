@@ -531,6 +531,13 @@ def format_duration_hours(hours: int | None) -> str:
     return f"{hours} h"
 
 
+def format_temperature(value: int | None) -> str:
+    if value is None:
+        return "n/a"
+    fahrenheit = round((value * 9 / 5) + 32)
+    return f"{value} °C / {fahrenheit} °F"
+
+
 def smart_human_value(name: str, raw: Any) -> str:
     value = parse_intish(raw)
     if name == "Power_On_Hours":
@@ -539,8 +546,8 @@ def smart_human_value(name: str, raw: Any) -> str:
         if isinstance(raw, str):
             match = re.search(r"(-?\d+)", raw)
             if match:
-                return f"{match.group(1)} C"
-        return f"{value} C" if value is not None else "n/a"
+                return format_temperature(int(match.group(1)))
+        return format_temperature(value)
     if name == "Percentage_Used":
         return f"{value} %" if value is not None else "n/a"
     if name in {"Reallocated_Sector_Ct", "Current_Pending_Sector", "Offline_Uncorrectable", "UDMA_CRC_Error_Count", "Start_Stop_Count", "Power_Cycle_Count", "Media_Errors", "Unsafe_Shutdowns", "Spin_Retry_Count"}:
@@ -651,7 +658,7 @@ def smart_overview(smart: dict[str, Any], disk: dict[str, Any]) -> dict[str, str
         "serial": disk.get("serial") or "n/a",
         "power_on_hours": raw("Power_On_Hours"),
         "start_stop_count": raw("Start_Stop_Count", "n/a"),
-        "temperature_c": human("Temperature_Celsius", str(payload.get("temperature", {}).get("current", "n/a"))),
+        "temperature_c": human("Temperature_Celsius", format_temperature(payload.get("temperature", {}).get("current"))),
         "reallocated": raw("Reallocated_Sector_Ct", "0"),
         "pending": raw("Current_Pending_Sector", "0"),
         "offline_uncorrectable": raw("Offline_Uncorrectable", "0"),
@@ -662,7 +669,7 @@ def smart_overview(smart: dict[str, Any], disk: dict[str, Any]) -> dict[str, str
 def enrich_report(report: dict[str, Any]) -> dict[str, Any]:
     payload = report.get("smart", {}).get("payload") or {}
     report["smart_rows"] = report.get("smart_rows") or normalized_smart_rows(payload)
-    report["overview"] = report.get("overview") or smart_overview(report.get("smart", {}), report.get("device", {}))
+    report["overview"] = smart_overview(report.get("smart", {}), report.get("device", {}))
     return report
 
 
@@ -815,7 +822,7 @@ def compute_health(disk: dict[str, Any], smart: dict[str, Any]) -> dict[str, Any
         notes.append(f"Viele Start/Stopp-Zyklen: {start_stop}.")
     if temp and isinstance(temp, (int, float)) and temp >= 50:
         score -= 8
-        notes.append(f"Hohe Temperatur beobachtet: {temp} C.")
+        notes.append(f"Hohe Temperatur beobachtet: {temp} °C.")
 
     score = max(0, min(100, score))
     if score >= 90:

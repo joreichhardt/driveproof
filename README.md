@@ -106,6 +106,74 @@ The live image is intended for direct use on test systems:
 This is especially useful when multiple internal drives need to be checked in a
 server or test machine.
 
+## Create a Bootable USB Stick
+
+Use the generated ISO image or the compressed release artifact. If you download
+the compressed release asset, unpack it first:
+
+```bash
+gunzip driveproof-live.iso.gz
+```
+
+### Windows
+
+Recommended tool: [Rufus](https://rufus.ie/)
+
+1. Insert a USB stick.
+2. Open Rufus.
+3. Select the USB device.
+4. Choose `driveproof-live.iso`.
+5. Start the write process.
+6. Boot the target machine from the USB stick.
+
+### macOS
+
+First identify the USB disk:
+
+```bash
+diskutil list
+```
+
+Unmount the target disk:
+
+```bash
+diskutil unmountDisk /dev/diskN
+```
+
+Write the ISO:
+
+```bash
+sudo dd if=driveproof-live.iso of=/dev/rdiskN bs=4m status=progress
+sync
+```
+
+Eject the disk:
+
+```bash
+diskutil eject /dev/diskN
+```
+
+Replace `diskN` with the correct device identifier.
+
+### Linux
+
+Identify the USB disk:
+
+```bash
+lsblk
+```
+
+Write the ISO:
+
+```bash
+sudo dd if=driveproof-live.iso of=/dev/sdX bs=4M status=progress oflag=sync
+sync
+```
+
+Replace `/dev/sdX` with the correct USB device.
+
+Warning: writing the ISO will erase the target USB stick.
+
 ## GitHub Releases and Prebuilt Images
 
 A prebuilt ISO can in principle be published as a GitHub release asset. The
@@ -113,7 +181,7 @@ current raw ISO build is larger than `2 GiB`, which makes direct GitHub release
 upload impractical and likely above the usual asset limit.
 
 Practical options:
-- test a compressed artifact such as `.iso.xz`
+- test a compressed artifact such as `.iso.gz` or `.iso.xz`
 - host the raw ISO externally
 - keep only the source on GitHub and build locally or in CI
 
