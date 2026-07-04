@@ -12,6 +12,24 @@ The focus is not just SMART visibility, but a credible resale workflow:
 - generate resale-friendly reports
 - boot directly from a NixOS live USB in kiosk mode
 
+## Download Live Image
+
+Latest public live image:
+
+- `0.0.1b`
+- OneDrive release folder: https://1drv.ms/f/c/8aa757f365d1fa83/IgAhoc92SZjpQqaPkGKHmod_AWk7fpZ1zPRKHlDMnKImvPM
+
+Included files:
+- `driveproof-live-0.0.1b.iso.gz`
+- `driveproof-live-0.0.1b.iso.gz.sha256`
+
+Verify and unpack:
+
+```bash
+sha256sum -c driveproof-live-0.0.1b.iso.gz.sha256
+gunzip driveproof-live-0.0.1b.iso.gz
+```
+
 ## Purpose
 
 DriveProof is built for workshop, inventory, and server scenarios where multiple
@@ -176,12 +194,13 @@ Warning: writing the ISO will erase the target USB stick.
 
 ## GitHub Releases and Prebuilt Images
 
-A prebuilt ISO can in principle be published as a GitHub release asset. The
-current raw ISO build is larger than `2 GiB`, which makes direct GitHub release
-upload impractical and likely above the usual asset limit.
+A prebuilt ISO can be published through GitHub Releases, but the current live
+image is larger than `2 GiB`, which makes direct GitHub release uploads
+impractical.
 
 Practical options:
-- test a compressed artifact such as `.iso.gz` or `.iso.xz`
+- publish a compressed artifact such as `.iso.gz` or `.iso.xz`
+- publish the current public build through external hosting
 - host the raw ISO externally
 - keep only the source on GitHub and build locally or in CI
 

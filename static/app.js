@@ -444,6 +444,10 @@ async function loadReports() {
   const payload = await fetchJson("/api/reports");
   const container = byId("reportsList");
   container.innerHTML = "";
+  if (!payload.reports.length) {
+    container.innerHTML = `<div class="job-box muted">Noch keine Berichte gespeichert.</div>`;
+    return;
+  }
   for (const report of payload.reports) {
     const item = document.createElement("div");
     item.className = "report-item";
