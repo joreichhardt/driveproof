@@ -1,5 +1,7 @@
 # HDD Resale Tester
 
+[![Buy Me a Coffee](https://img.shields.io/badge/Buy%20Me%20a%20Coffee-support-ffdd00?logo=buymeacoffee&logoColor=000000)](https://buymeacoffee.com/joreichhardt)
+
 `HDD Resale Tester` ist eine Linux- und NixOS-orientierte Alternative zu CrystalDiskInfo und GSmartControl fuer den strukturierten Check gebrauchter HDDs, SSDs und NVMe-Laufwerke vor dem Verkauf.
 
 Der Fokus liegt nicht nur auf SMART-Anzeige, sondern auf einem glaubwuerdigen Verkaufs-Workflow:
@@ -121,4 +123,6 @@ Das Projekt ist keine 1:1-Kopie von CrystalDiskInfo oder GSmartControl. Es ist e
 
 ## Support
 
-Ein `Buy Me a Coffee`-Link kann problemlos in das Repo aufgenommen werden, zum Beispiel als Badge im README oder als normaler Support-Abschnitt. Sobald die Ziel-URL feststeht, sollte sie direkt im README und spaeter auch in die GitHub-Repo-Beschreibung oder Website eingetragen werden.
+Wenn dir das Projekt nuetzt, kannst du es hier unterstuetzen:
+
+- https://buymeacoffee.com/joreichhardt
