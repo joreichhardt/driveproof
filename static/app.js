@@ -359,7 +359,7 @@ function renderOverview(disk, overview, health) {
     [OVERVIEW_LABELS.pending, overview?.pending || "0"],
     [OVERVIEW_LABELS.offlineUncorrectable, overview?.offline_uncorrectable || "0"],
     [OVERVIEW_LABELS.crcErrors, overview?.crc_errors || "0"],
-    [OVERVIEW_LABELS.mediaErrors, smart.payload?.nvme_smart_health_information_log?.media_errors ?? "n/a"],
+    [OVERVIEW_LABELS.mediaErrors, overview?.media_errors || "n/a"],
   ];
 
   byId("overviewGrid").innerHTML = items

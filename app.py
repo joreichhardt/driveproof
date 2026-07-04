@@ -663,6 +663,8 @@ def smart_overview(smart: dict[str, Any], disk: dict[str, Any]) -> dict[str, str
         "pending": raw("Current_Pending_Sector", "0"),
         "offline_uncorrectable": raw("Offline_Uncorrectable", "0"),
         "crc_errors": raw("UDMA_CRC_Error_Count", "0"),
+        "media_errors": raw("Media_Errors", "n/a"),
+        "unsafe_shutdowns": raw("Unsafe_Shutdowns", "n/a"),
     }
 
 
