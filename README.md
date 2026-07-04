@@ -1,8 +1,8 @@
-# HDD Resale Tester
+# DriveProof
 
 [![Buy Me a Coffee](https://img.shields.io/badge/Buy%20Me%20a%20Coffee-support-ffdd00?logo=buymeacoffee&logoColor=000000)](https://buymeacoffee.com/joreichhardt)
 
-`HDD Resale Tester` ist eine Linux- und NixOS-orientierte Alternative zu CrystalDiskInfo und GSmartControl fuer den strukturierten Check gebrauchter HDDs, SSDs und NVMe-Laufwerke vor dem Verkauf.
+`DriveProof` ist eine Linux- und NixOS-orientierte Alternative zu CrystalDiskInfo und GSmartControl fuer den strukturierten Check gebrauchter HDDs, SSDs und NVMe-Laufwerke vor dem Verkauf.
 
 Der Fokus liegt nicht nur auf SMART-Anzeige, sondern auf einem glaubwuerdigen Verkaufs-Workflow:
 - Laufwerke automatisch erkennen
@@ -90,7 +90,7 @@ nix build .#iso
 Ergebnis:
 
 ```text
-./result/iso/hdd-resale-tester-live.iso
+./result/iso/driveproof-live.iso
 ```
 
 ## NixOS Live-USB

@@ -14,7 +14,7 @@ let
   ]);
 
   kioskSession = pkgs.writeShellApplication {
-    name = "hdd-kiosk-session";
+    name = "driveproof-kiosk-session";
     runtimeInputs = [
       pkgs.coreutils
       pkgs.curl
@@ -46,7 +46,7 @@ let
 
   xinitrc = pkgs.writeText "xinitrc" ''
     #!${pkgs.runtimeShell}
-    exec ${kioskSession}/bin/hdd-kiosk-session
+    exec ${kioskSession}/bin/driveproof-kiosk-session
   '';
 
 in {
@@ -54,9 +54,9 @@ in {
     (modulesPath + "/installer/cd-dvd/installation-cd-graphical-base.nix")
   ];
 
-  isoImage.isoName = lib.mkForce "hdd-resale-tester-live.iso";
+  isoImage.isoName = lib.mkForce "driveproof-live.iso";
 
-  networking.hostName = "hdd-resale-live";
+  networking.hostName = "driveproof-live";
   time.timeZone = "Europe/Berlin";
 
   services.xserver.enable = true;
@@ -84,8 +84,8 @@ in {
     xorg.xorgserver
   ];
 
-  systemd.services.hdd-resale-tester = {
-    description = "HDD Resale Tester";
+  systemd.services.driveproof = {
+    description = "DriveProof";
     wantedBy = [ "multi-user.target" ];
     after = [ "network.target" ];
     serviceConfig = {
@@ -100,7 +100,7 @@ in {
   systemd.services.kiosk-session = {
     description = "Kiosk Chromium Session";
     wantedBy = [ "multi-user.target" ];
-    after = [ "systemd-user-sessions.service" "network-online.target" "hdd-resale-tester.service" ];
+    after = [ "systemd-user-sessions.service" "network-online.target" "driveproof.service" ];
     wants = [ "network-online.target" ];
     conflicts = [ "getty@tty1.service" ];
     serviceConfig = {

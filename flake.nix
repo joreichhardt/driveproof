@@ -1,5 +1,5 @@
 {
-  description = "Live-boot NixOS image for HDD resale testing kiosk";
+  description = "DriveProof NixOS live boot image for disk diagnostics and resale testing";
 
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-24.11";
 
@@ -7,7 +7,7 @@
     let
       system = "x86_64-linux";
     in {
-      nixosConfigurations.hdd-resale-live = nixpkgs.lib.nixosSystem {
+      nixosConfigurations.driveproof-live = nixpkgs.lib.nixosSystem {
         inherit system;
         modules = [
           ./nixos/live-image.nix
@@ -15,6 +15,6 @@
       };
 
       packages.${system}.iso =
-        self.nixosConfigurations.hdd-resale-live.config.system.build.isoImage;
+        self.nixosConfigurations.driveproof-live.config.system.build.isoImage;
     };
 }
