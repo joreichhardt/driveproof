@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Bericht {{ report.report_id }}</title>
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=20260704-ui9">
   </head>
   <body class="report-body">
     <main class="report-page">
@@ -13,6 +13,9 @@
           <p class="eyebrow">Drive Health Report</p>
           <h1>{{ report.device.vendor }} {{ report.device.model }}</h1>
           <p class="muted">{{ report.device.path }} | Serial {{ report.overview.serial }}</p>
+        </div>
+        <div class="report-actions">
+          <button class="icon-button legal-back-link" onclick="window.print()">Als PDF speichern</button>
         </div>
       </header>
 

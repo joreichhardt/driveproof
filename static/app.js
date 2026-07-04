@@ -438,12 +438,36 @@ async function loadReports() {
   const container = byId("reportsList");
   container.innerHTML = "";
   for (const report of payload.reports) {
-    const anchor = document.createElement("a");
-    anchor.className = "report-link";
-    anchor.href = `/report/${report.report_id}`;
-    anchor.target = "_blank";
-    anchor.textContent = `${report.device.path} · Score ${report.health.score} · ${new Date(report.generated_at).toLocaleString()}`;
-    container.appendChild(anchor);
+    const item = document.createElement("div");
+    item.className = "report-item";
+    item.innerHTML = `
+      <a class="report-link" href="/report/${report.report_id}" target="_blank">${report.device.path} · Score ${report.health.score} · ${new Date(report.generated_at).toLocaleString()}</a>
+      <div class="report-actions-inline">
+        <a class="mini-action" href="/report/${report.report_id}" target="_blank">Oeffnen</a>
+        <a class="mini-action" href="/report/${report.report_id}" target="_blank" data-action="pdf">PDF</a>
+        <button class="mini-action danger" type="button" data-action="delete">Loeschen</button>
+      </div>
+    `;
+
+    item.querySelector('[data-action="pdf"]').onclick = (event) => {
+      event.preventDefault();
+      window.open(`/report/${report.report_id}`, "_blank", "noopener,noreferrer");
+    };
+
+    item.querySelector('[data-action="delete"]').onclick = async () => {
+      const confirmed = window.confirm(`Bericht ${report.report_id} wirklich loeschen?`);
+      if (!confirmed) return;
+      try {
+        await fetchJson(`/api/reports/${report.report_id}`, { method: "DELETE" });
+        await loadReports();
+      } catch (error) {
+        if (state.selectedDisk) {
+          byId("jobStatus").textContent = `report delete error · ${error.message}`;
+        }
+      }
+    };
+
+    container.appendChild(item);
   }
 }
 

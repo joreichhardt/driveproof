@@ -1073,6 +1073,13 @@ def load_report(report_id: str) -> dict[str, Any]:
     return enrich_report(json.loads(path.read_text(encoding="utf-8")))
 
 
+def delete_report(report_id: str) -> None:
+    path = REPORT_DIR / f"{report_id}.json"
+    if not path.exists():
+        raise FileNotFoundError(report_id)
+    path.unlink()
+
+
 def persist_job_state(job: TestJob) -> None:
     with jobs_lock:
         save_job(job)
@@ -1662,6 +1669,17 @@ def api_reports():
         except Exception:
             continue
     return jsonify({"reports": reports})
+
+
+@app.delete("/api/reports/<report_id>")
+def api_delete_report(report_id: str):
+    try:
+        delete_report(report_id)
+        return jsonify({"deleted": True, "report_id": report_id})
+    except FileNotFoundError:
+        return jsonify({"error": "Bericht nicht gefunden"}), 404
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 500
 
 
 if __name__ == "__main__":
