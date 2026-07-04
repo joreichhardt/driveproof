@@ -121,6 +121,35 @@ Das Projekt ist keine 1:1-Kopie von CrystalDiskInfo oder GSmartControl. Es ist e
 - Live-USB-Betrieb
 - Mehrplatten-Szenarien
 
+## Lizenz
+
+Der DriveProof-Anwendungscode in diesem Repository steht unter der MIT-Lizenz:
+
+- `LICENSE`
+
+Fuer das Live-ISO und die eingebundenen Systemwerkzeuge gelten zusaetzlich die
+jeweiligen Upstream-Lizenzen. Eine praktische Uebersicht liegt hier:
+
+- `THIRD_PARTY_LICENSES.md`
+
+Im Live-ISO sind diese Dateien sowohl ueber die App als auch unter
+`/etc/driveproof/` verfuegbar.
+
+## Commercial Services
+
+DriveProof ist bewusst so aufgebaut, dass kommerzielle Services darum herum
+einfach moeglich sind, zum Beispiel:
+
+- Custom branding
+- Build service
+- White-label live images
+- Hardware-specific kiosk builds
+- Support and maintenance
+
+Details:
+
+- `COMMERCIAL_SERVICES.md`
+
 ## Support
 
 Wenn dir das Projekt nuetzt, kannst du es hier unterstuetzen:

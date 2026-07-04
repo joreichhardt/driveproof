@@ -84,6 +84,10 @@ in {
     xorg.xorgserver
   ];
 
+  environment.etc."driveproof/LICENSE".source = ../LICENSE;
+  environment.etc."driveproof/THIRD_PARTY_LICENSES.md".source = ../THIRD_PARTY_LICENSES.md;
+  environment.etc."driveproof/COMMERCIAL_SERVICES.md".source = ../COMMERCIAL_SERVICES.md;
+
   systemd.services.driveproof = {
     description = "DriveProof";
     wantedBy = [ "multi-user.target" ];

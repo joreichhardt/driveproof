@@ -68,6 +68,10 @@ body[data-theme="light"] {
   padding: 28px;
 }
 
+.legal-shell {
+  max-width: 1500px;
+}
+
 .topbar,
 .section-head,
 .pill-row,
@@ -127,6 +131,12 @@ body[data-theme="light"] {
   gap: 22px;
 }
 
+.legal-layout {
+  display: grid;
+  grid-template-columns: 320px 1fr;
+  gap: 22px;
+}
+
 .panel {
   background: var(--panel);
   border: 1px solid var(--line);
@@ -142,6 +152,12 @@ body[data-theme="light"] {
 }
 
 .panel-list {
+  position: sticky;
+  top: 16px;
+  align-self: start;
+}
+
+.legal-nav {
   position: sticky;
   top: 16px;
   align-self: start;
@@ -707,6 +723,42 @@ body[data-theme="light"] .confirm-input {
   border-color: rgba(52, 211, 153, 0.3);
 }
 
+.app-footer {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 18px;
+  padding: 18px 4px 0;
+  color: var(--muted);
+}
+
+.app-footer a {
+  color: var(--muted);
+  text-decoration: none;
+}
+
+.app-footer a:hover {
+  color: var(--text);
+}
+
+.legal-doc-panel {
+  min-height: 70vh;
+}
+
+.legal-pre {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font: 13px/1.55 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  color: var(--text);
+}
+
+.legal-back-link {
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
 .info-grid,
 .report-spec-grid {
   display: grid;
@@ -826,6 +878,7 @@ body[data-theme="light"] .confirm-input {
 
 @media (max-width: 1100px) {
   .layout,
+  .legal-layout,
   .diagnostic-header,
   .content-grid,
   .report-diagnostic,

@@ -17,6 +17,11 @@ from flask import Flask, jsonify, render_template, request
 BASE_DIR = Path(__file__).resolve().parent
 REPORT_DIR = BASE_DIR / "reports"
 DB_PATH = BASE_DIR / "state.db"
+LEGAL_DOCS = {
+    "license": BASE_DIR / "LICENSE",
+    "third-party": BASE_DIR / "THIRD_PARTY_LICENSES.md",
+    "commercial": BASE_DIR / "COMMERCIAL_SERVICES.md",
+}
 REPORT_DIR.mkdir(exist_ok=True)
 
 app = Flask(__name__)
@@ -1427,6 +1432,31 @@ def run_test_job(job_id: str) -> None:
 @app.route("/")
 def index() -> str:
     return render_template("index.html")
+
+
+@app.route("/legal")
+def legal_index() -> str:
+    docs = []
+    for slug, path in LEGAL_DOCS.items():
+        docs.append(
+            {
+                "slug": slug,
+                "title": path.stem.replace("_", " ").replace("-", " ").title(),
+                "content": path.read_text(encoding="utf-8") if path.exists() else "Not found.",
+            }
+        )
+    return render_template("legal.html", docs=docs, active_slug="license")
+
+
+@app.route("/legal/<slug>")
+def legal_doc(slug: str) -> str:
+    path = LEGAL_DOCS.get(slug)
+    if not path:
+        return render_template("legal.html", docs=[], active_slug=slug, error="Dokument nicht gefunden."), 404
+
+    docs = [{"slug": key, "title": value.stem.replace("_", " ").replace("-", " ").title()} for key, value in LEGAL_DOCS.items()]
+    content = path.read_text(encoding="utf-8") if path.exists() else "Not found."
+    return render_template("legal.html", docs=docs, active_slug=slug, content=content, title=path.stem.replace("_", " ").replace("-", " ").title())
 
 
 @app.route("/report/<report_id>")

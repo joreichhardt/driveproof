@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{{ title or "DriveProof Legal" }}</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=20260704-ui7">
+  </head>
+  <body>
+    <div class="app-shell legal-shell">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">DriveProof</p>
+          <h1>{{ title or "Legal and Licensing" }}</h1>
+          <p class="topbar-copy">Bundled project license, third-party license overview, and commercial services notes.</p>
+        </div>
+        <div class="topbar-actions">
+          <a href="/" class="icon-button legal-back-link">Zur App</a>
+        </div>
+      </header>
+
+      {% if error %}
+      <section class="panel inset">
+        <p class="muted">{{ error }}</p>
+      </section>
+      {% else %}
+      <main class="legal-layout">
+        <aside class="panel panel-list legal-nav">
+          <div class="section-head">
+            <h2>Dokumente</h2>
+          </div>
+          <div class="disk-list">
+            {% for doc in docs %}
+            <a href="/legal/{{ doc.slug }}" class="disk-card {% if doc.slug == active_slug %}active{% endif %}">
+              <div class="disk-card-title">{{ doc.title }}</div>
+              <div class="muted">{{ doc.slug }}</div>
+            </a>
+            {% endfor %}
+          </div>
+        </aside>
+
+        <section class="panel panel-detail">
+          <div class="panel inset legal-doc-panel">
+            <pre class="legal-pre">{{ content if content is defined else docs[0].content }}</pre>
+          </div>
+        </section>
+      </main>
+      {% endif %}
+    </div>
+  </body>
+  </html>
