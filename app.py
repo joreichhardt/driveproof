@@ -181,7 +181,14 @@ def tool_path(name: str) -> str | None:
         vendor_path = vendor_tool_path(name)
         if vendor_path:
             return vendor_path
-    return shutil.which(name)
+    path = shutil.which(name)
+    if path:
+        return path
+    for directory in ("/run/current-system/sw/bin", "/etc/profiles/per-user/kiosk/bin", "/usr/bin", "/bin"):
+        candidate = Path(directory) / name
+        if candidate.exists() and os.access(candidate, os.X_OK):
+            return str(candidate)
+    return None
 
 
 def resolved_command(args: list[str]) -> list[str]:
@@ -212,7 +219,27 @@ def report_filename(report: dict[str, Any]) -> str:
     serial = device.get("serial") or device.get("wwn") or device.get("name") or "unknown"
     model = device.get("model") or device.get("vendor") or device.get("kind") or "disk"
     report_id = report.get("report_id") or uuid.uuid4().hex[:12]
-    return f"{stamp}_{slugify_filename_part(model)}_{slugify_filename_part(serial)}_{report_id}.json"
+    report_kind = report.get("report_kind") or classify_report_kind(report)
+    return f"{stamp}_{slugify_filename_part(report_kind)}_{slugify_filename_part(model)}_{slugify_filename_part(serial)}_{report_id}.json"
+
+
+def classify_report_kind(report: dict[str, Any]) -> str:
+    test = report.get("test") or {}
+    mode = (report.get("source_job") or {}).get("mode") or test.get("type") or ""
+    if test.get("erasure") or mode in {
+        "erase_zero",
+        "secure_erase_ata",
+        "secure_erase_ata_enhanced",
+        "nvme_format",
+        "nvme_sanitize_crypto",
+        "nvme_sanitize_block",
+    }:
+        return "erase"
+    return "test"
+
+
+def report_kind_label(kind: str) -> str:
+    return "Erase Report" if kind == "erase" else "Test Report"
 
 
 def report_file_path(report_id: str, report: dict[str, Any] | None = None) -> Path:
@@ -906,7 +933,7 @@ def chrome_binary() -> str | None:
 def render_report_pdf_to_path(report_id: str, pdf_path: Path) -> None:
     pdf_engine = chrome_binary()
     if not pdf_engine:
-        raise RuntimeError("No Chromium or Chrome binary found for PDF export.")
+        raise RuntimeError(f"No Chromium or Chrome binary found for PDF export. PATH={os.environ.get('PATH', '')}")
 
     url = f"http://127.0.0.1:5055/report/{report_id}"
     rc, out, err = run_command(
@@ -1881,6 +1908,8 @@ def smart_overview(smart: dict[str, Any], disk: dict[str, Any]) -> dict[str, str
 
 def enrich_report(report: dict[str, Any]) -> dict[str, Any]:
     payload = report.get("smart", {}).get("payload") or {}
+    report["report_kind"] = report.get("report_kind") or classify_report_kind(report)
+    report["report_kind_label"] = report_kind_label(report["report_kind"])
     report["smart_rows"] = report.get("smart_rows") or normalized_smart_rows(payload)
     report["overview"] = smart_overview(report.get("smart", {}), report.get("device", {}))
     report.setdefault("compliance", compliance_from_options(report.get("source_job", {}).get("options", {})))
@@ -1952,6 +1981,8 @@ def build_report_payload(
             "current_step": source_job.current_step,
             "options": source_job.options,
         }
+    report["report_kind"] = classify_report_kind(report)
+    report["report_kind_label"] = report_kind_label(report["report_kind"])
     report["compliance"] = compliance_from_options(source_job.options if source_job else {})
     report["audit"] = [
         audit_event(
@@ -3409,8 +3440,11 @@ def api_reports():
                 {
                     "report_id": payload["report_id"],
                     "generated_at": payload["generated_at"],
+                    "report_kind": classify_report_kind(payload),
+                    "report_kind_label": report_kind_label(classify_report_kind(payload)),
                     "device": payload["device"],
                     "health": payload["health"],
+                    "test": payload.get("test") or {},
                     "export": payload.get("export"),
                 }
             )

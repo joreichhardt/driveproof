@@ -267,6 +267,7 @@ in {
     requires = [ "driveproof-mount-exports.service" ];
     path = with pkgs; [
       coreutils
+      chromium
       dpkg
       dosfstools
       eject

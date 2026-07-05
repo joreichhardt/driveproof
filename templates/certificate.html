@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Certificate {{ report.report_id }}</title>
     <link rel="icon" type="image/png" href="{{ url_for('static', filename='assets/driveproof-logo.png') }}">
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=20260705-pages1">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=20260705-report-types1">
   </head>
   <body class="report-body certificate-body">
     <main class="report-page certificate-page">
@@ -15,7 +15,7 @@
           <div>
             <p class="eyebrow">DriveProof Certificate</p>
             <h1>{{ certificate.type }}</h1>
-            <p class="muted">Certificate ID {{ report.report_id }} | Issued {{ certificate.issued_at }}</p>
+            <p class="muted">{{ report.report_kind_label or 'Test Report' }} | Certificate ID {{ report.report_id }} | Issued {{ certificate.issued_at }}</p>
           </div>
         </div>
         <div class="report-proof-block">
@@ -47,6 +47,7 @@
 
       <section class="report-spec-grid report-spec-grid-compact">
         <div class="report-spec"><span>Device</span><strong>{{ report.device.vendor }} {{ report.device.model }}</strong></div>
+        <div class="report-spec"><span>Report Type</span><strong>{{ report.report_kind_label or 'Test Report' }}</strong></div>
         <div class="report-spec"><span>Serial</span><strong>{{ report.overview.serial }}</strong></div>
         <div class="report-spec"><span>Path</span><strong>{{ report.device.path }}</strong></div>
         <div class="report-spec"><span>Capacity</span><strong>{{ report.overview.capacity_gb }} GB</strong></div>

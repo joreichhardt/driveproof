@@ -880,11 +880,38 @@ async function loadReports() {
     container.innerHTML = `<div class="job-box muted">No reports saved yet.</div>`;
     return;
   }
-  for (const report of payload.reports) {
-    const item = document.createElement("div");
-    item.className = "report-item";
-    item.innerHTML = `
-      <a class="report-link" href="/report/${report.report_id}">${report.device.path} · Score ${report.health.score} · ${new Date(report.generated_at).toLocaleString()}</a>
+
+  const groups = [
+    { id: "test", label: "Test Reports" },
+    { id: "erase", label: "Erase Reports" },
+  ];
+
+  for (const group of groups) {
+    const reports = payload.reports.filter((report) => (report.report_kind || "test") === group.id);
+    const section = document.createElement("section");
+    section.className = "report-group";
+    section.innerHTML = `
+      <div class="report-group-head">
+        <h3>${group.label}</h3>
+        <span class="badge">${reports.length}</span>
+      </div>
+    `;
+    if (!reports.length) {
+      section.insertAdjacentHTML("beforeend", `<div class="job-box muted">No ${group.label.toLowerCase()} saved yet.</div>`);
+      container.appendChild(section);
+      continue;
+    }
+
+    for (const report of reports) {
+      const item = document.createElement("div");
+      item.className = "report-item";
+      const kindLabel = report.report_kind_label || (report.report_kind === "erase" ? "Erase Report" : "Test Report");
+      const evidence = report.test?.label || report.test?.type || "Report";
+      item.innerHTML = `
+      <a class="report-link" href="/report/${report.report_id}">
+        <span class="report-kind-pill ${report.report_kind === "erase" ? "erase" : "test"}">${escapeHtml(kindLabel)}</span>
+        ${escapeHtml(report.device.path)} · ${escapeHtml(evidence)} · Score ${report.health.score} · ${new Date(report.generated_at).toLocaleString()}
+      </a>
       <div class="report-export-status ${report.export?.status === "saved" ? "ok" : report.export?.status === "error" ? "danger" : ""}">
         ${reportExportStatus(report.export)}
       </div>
@@ -896,19 +923,21 @@ async function loadReports() {
       </div>
     `;
 
-    item.querySelector('[data-action="delete"]').onclick = async () => {
-      const confirmed = window.confirm(`Delete report ${report.report_id}?`);
-      if (!confirmed) return;
-      try {
-        await fetchJson(`/api/reports/${report.report_id}`, { method: "DELETE" });
-        await loadReports();
-      } catch (error) {
-        if (state.selectedDisk) {
-          byId("jobStatus").textContent = `report delete error · ${error.message}`;
+      item.querySelector('[data-action="delete"]').onclick = async () => {
+        const confirmed = window.confirm(`Delete report ${report.report_id}?`);
+        if (!confirmed) return;
+        try {
+          await fetchJson(`/api/reports/${report.report_id}`, { method: "DELETE" });
+          await loadReports();
+        } catch (error) {
+          if (state.selectedDisk) {
+            byId("jobStatus").textContent = `report delete error · ${error.message}`;
+          }
         }
-      }
-    };
-    container.appendChild(item);
+      };
+      section.appendChild(item);
+    }
+    container.appendChild(section);
   }
 }
 

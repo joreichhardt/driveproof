@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Report {{ report.report_id }}</title>
     <link rel="icon" type="image/png" href="{{ url_for('static', filename='assets/driveproof-logo.png') }}">
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=20260705-compliance1">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=20260705-report-types1">
   </head>
   <body class="report-body">
     <main class="report-page report-page-a4">
@@ -13,7 +13,7 @@
         <div class="report-brand-block">
           <img class="report-logo" src="{{ url_for('static', filename='assets/driveproof-logo.png') }}" alt="DriveProof logo">
           <div>
-            <p class="eyebrow">Drive Health Report</p>
+            <p class="eyebrow">{{ report.report_kind_label or 'Drive Health Report' }}</p>
             <h1>{{ report.device.vendor }} {{ report.device.model }}</h1>
             <p class="muted">{{ report.device.path }} | Serial {{ report.overview.serial }}</p>
           </div>
@@ -46,7 +46,7 @@
       </section>
 
       <section class="panel inset report-summary-panel report-compact-panel">
-        <h2>Resale summary</h2>
+        <h2>{{ 'Erasure summary' if report.report_kind == 'erase' else 'Resale test summary' }}</h2>
         <div class="summary-item">
           <span>Assessment</span>
           <strong>{{ report.sales_summary.verdict if report.sales_summary else report.health.summary }}</strong>
@@ -122,6 +122,7 @@
 
       <section class="report-spec-grid report-spec-grid-compact">
         <div class="report-spec"><span>Model</span><strong>{{ report.device.model or 'n/a' }}</strong></div>
+        <div class="report-spec"><span>Report Type</span><strong>{{ report.report_kind_label or 'Test Report' }}</strong></div>
         <div class="report-spec"><span>Firmware</span><strong>{{ report.smart.payload.firmware_version if report.smart.payload else 'n/a' }}</strong></div>
         <div class="report-spec"><span>Capacity</span><strong>{{ report.overview.capacity_gb }} GB</strong></div>
         <div class="report-spec"><span>Interface</span><strong>{{ report.overview.interface }}</strong></div>
