@@ -6,6 +6,7 @@ import os
 import re
 import shutil
 import sqlite3
+import sys
 import tempfile
 import threading
 import time
@@ -24,8 +25,24 @@ from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey, Ed25519PublicKey
 
-BASE_DIR = Path(__file__).resolve().parent
-STATE_DIR = Path(os.environ.get("DRIVEPROOF_STATE_DIR", BASE_DIR))
+def bundled() -> bool:
+    return bool(getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"))
+
+
+def resource_base_dir() -> Path:
+    if bundled():
+        return Path(getattr(sys, "_MEIPASS"))
+    return Path(__file__).resolve().parent
+
+
+def default_state_dir() -> Path:
+    if bundled():
+        return Path.home() / ".local" / "state" / "driveproof"
+    return BASE_DIR
+
+
+BASE_DIR = resource_base_dir()
+STATE_DIR = Path(os.environ.get("DRIVEPROOF_STATE_DIR", default_state_dir()))
 REPORT_DIR = STATE_DIR / "reports"
 DB_PATH = STATE_DIR / "state.db"
 SIGNING_KEY_PATH = STATE_DIR / "driveproof-signing.key"
@@ -34,7 +51,7 @@ LEGAL_DOCS = {
     "third-party": BASE_DIR / "THIRD_PARTY_LICENSES.md",
     "commercial": BASE_DIR / "COMMERCIAL_SERVICES.md",
 }
-REPORT_DIR.mkdir(exist_ok=True)
+REPORT_DIR.mkdir(parents=True, exist_ok=True)
 EXPORT_MOUNT_ROOT = Path("/run/media/driveproof")
 GITHUB_QR_PATH = BASE_DIR / "static" / "assets" / "github-qr.svg"
 PORTAL_URL = os.environ.get("DRIVEPROOF_PORTAL_URL", "").rstrip("/")
@@ -71,7 +88,7 @@ COMPLIANCE_PROFILES = {
     },
 }
 
-app = Flask(__name__)
+app = Flask(__name__, template_folder=str(BASE_DIR / "templates"), static_folder=str(BASE_DIR / "static"))
 
 
 def utc_now_iso() -> str:

@@ -7,7 +7,7 @@ CORES ?= $(shell nproc)
 IMAGE_PATH ?= $(shell find -L result -maxdepth 3 -type f -name 'driveproof-live-usb.img' 2>/dev/null | head -n 1)
 USB_DEVICE ?=
 
-.PHONY: help build build-fast build-iso build-iso-fast image-path list-usb flash-usb unmount-usb app
+.PHONY: help build build-fast build-iso build-iso-fast image-path list-usb flash-usb unmount-usb binary-deps binary binary-clean app
 
 help:
 	@echo "DriveProof build helpers"
@@ -22,6 +22,9 @@ help:
 	@echo "  make flash-usb            Auto-detect and flash the USB stick"
 	@echo "  make flash-usb USB_DEVICE=/dev/sdX"
 	@echo "                            Flash a specific device"
+	@echo "  make binary               Build Linux self-contained DriveProof binary"
+	@echo "  make binary-deps          Install Python build dependencies"
+	@echo "  make binary-clean         Remove binary build outputs"
 	@echo "  make app                  Start the local Flask app"
 	@echo
 	@echo "Variables:"
@@ -112,6 +115,17 @@ flash-usb:
 	sudo dd if="$$(readlink -f "$$image")" of="$$device" bs=16M status=progress conv=fsync; \
 	sync; \
 	echo "Flash complete: $$device"
+
+binary-deps:
+	.venv/bin/python -m pip install -r requirements.txt -r requirements-dev.txt
+
+binary:
+	.venv/bin/python -m PyInstaller --clean --noconfirm driveproof.spec
+	@echo "Binary written to: $$(readlink -f dist/driveproof)"
+	@echo "Run with: sudo ./dist/driveproof"
+
+binary-clean:
+	rm -rf build dist
 
 app:
 	/home/jre/dev/hdd-test/.venv/bin/python /home/jre/dev/hdd-test/app.py

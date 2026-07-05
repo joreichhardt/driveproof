@@ -151,6 +151,55 @@ WSL is not recommended for real drive testing because raw disk access, SMART
 passthrough, USB docks, ATA security commands, and NVMe control commands are
 not consistently available there.
 
+## Linux Portable Binary
+
+DriveProof can also be built as a Linux self-contained binary for workshop PCs
+where you do not want to start it through a Python virtual environment.
+
+The binary bundles the DriveProof Python application, templates, static assets,
+and license documents. Low-level disk tools are still external Linux
+dependencies because they need direct OS and device access:
+
+- `smartctl` from `smartmontools`
+- `hdparm`
+- `nvme`
+- `lsblk` / `blockdev` from `util-linux`
+- `udisksctl` from `udisks2`
+- Chromium or Chrome for PDF export
+
+Build:
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+make binary-deps
+make binary
+```
+
+Run:
+
+```bash
+sudo ./dist/driveproof
+```
+
+Then open:
+
+```text
+http://127.0.0.1:5055
+```
+
+Default state directory for the binary:
+
+```text
+~/.local/state/driveproof
+```
+
+Override it when needed:
+
+```bash
+sudo DRIVEPROOF_STATE_DIR=/var/lib/driveproof ./dist/driveproof
+```
+
 ## Typical Workflow
 
 1. Attach drives via USB dock or directly inside a server.

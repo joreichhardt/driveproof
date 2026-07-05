@@ -8,3 +8,5 @@ driveproof-signing.key
 driveproof-signing.legacy
 driveproof-web.log
 release/
+build/
+dist/
