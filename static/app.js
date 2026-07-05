@@ -21,6 +21,8 @@ const state = {
     showInternalDisks: true,
     enableDestructive: false,
     allowInternalErase: false,
+    postEraseTestEnabled: false,
+    postEraseTestMode: "quick",
   },
 };
 
@@ -294,6 +296,15 @@ function syncSettingsInputs() {
   byId("showInternalDisks").checked = state.settings.showInternalDisks;
   byId("enableDestructive").checked = state.settings.enableDestructive;
   byId("allowInternalErase").checked = state.settings.allowInternalErase;
+  byId("postEraseTestEnabled").checked = state.settings.postEraseTestEnabled;
+  byId("postEraseTestMode").value = state.settings.postEraseTestMode || "quick";
+  byId("postEraseTestMode").disabled = !state.settings.postEraseTestEnabled;
+}
+
+function postErasePayload() {
+  return state.settings.postEraseTestEnabled
+    ? { post_test_mode: state.settings.postEraseTestMode || "quick" }
+    : {};
 }
 
 function loadBatchSelection() {
@@ -377,6 +388,26 @@ function reportExportStatus(exportInfo) {
   }
   if (exportInfo.status === "error") return `export error · ${exportInfo.message}`;
   return exportInfo.message || exportInfo.status || "export status unknown";
+}
+
+async function printReport(reportId) {
+  const payload = await fetchJson("/api/printers");
+  const printers = payload.printers || [];
+  if (!printers.length) {
+    window.alert("No CUPS printers found. Configure an IPP/AirPrint or USB printer first.");
+    return;
+  }
+  const names = printers.map((printer) => printer.name);
+  const selected = names.length === 1
+    ? names[0]
+    : window.prompt(`Printer name:\n${names.join("\n")}`, names[0]);
+  if (!selected) return;
+  const result = await fetchJson(`/api/reports/${reportId}/print`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ printer: selected }),
+  });
+  window.alert(result.message || `Print job submitted to ${selected}.`);
 }
 
 async function loadSelectedDiskJobs() {
@@ -917,11 +948,20 @@ async function loadReports() {
       </div>
       <div class="report-actions-inline">
         <a class="mini-action" href="/report/${report.report_id}">Open</a>
-        <a class="mini-action" href="/certificate/${report.report_id}">Certificate</a>
+        ${report.report_kind === "erase" ? `<a class="mini-action" href="/certificate/${report.report_id}">Certificate</a>` : ""}
         <a class="mini-action" href="/report/${report.report_id}/pdf">PDF</a>
+        <button class="mini-action" type="button" data-action="print">Print</button>
         <button class="mini-action danger" type="button" data-action="delete">Delete</button>
       </div>
     `;
+
+      item.querySelector('[data-action="print"]').onclick = async () => {
+        try {
+          await printReport(report.report_id);
+        } catch (error) {
+          window.alert(`Print error: ${error.message}`);
+        }
+      };
 
       item.querySelector('[data-action="delete"]').onclick = async () => {
         const confirmed = window.confirm(`Delete report ${report.report_id}?`);
@@ -1163,7 +1203,10 @@ async function pollSelectedJob() {
   setJobProgress(percent, MODE_LABELS[payload.mode] || "Test");
 
   if (payload.status === "done") {
-    byId("jobStatus").innerHTML = `done · ${reportExportStatus(payload.result.export)} · <a href="/report/${payload.result.report_id}">Open report</a>`;
+    const postLink = payload.result.post_test?.report_id
+      ? ` · <a href="/report/${payload.result.post_test.report_id}">Open post-test report</a>`
+      : "";
+    byId("jobStatus").innerHTML = `done · ${reportExportStatus(payload.result.export)} · <a href="/report/${payload.result.report_id}">Open report</a>${postLink}`;
     setJobProgress(100, MODE_LABELS[payload.mode] || "Test");
     state.currentJobId = null;
     state.pollTimer = null;
@@ -1234,7 +1277,7 @@ async function eraseSelectedDisk() {
       const payload = await fetchJson(`/api/disks/${disk.name}/erase`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ allow_internal: state.settings.allowInternalErase, compliance_profile: state.selectedComplianceProfile }),
+        body: JSON.stringify({ allow_internal: state.settings.allowInternalErase, compliance_profile: state.selectedComplianceProfile, ...postErasePayload() }),
       });
       started.push({ disk, jobId: payload.job_id });
     } catch (error) {
@@ -1258,7 +1301,7 @@ async function secureEraseSelectedDisk(method = "basic") {
       const payload = await fetchJson(`/api/disks/${disk.name}/secure-erase`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ allow_internal: state.settings.allowInternalErase, method, compliance_profile: state.selectedComplianceProfile }),
+        body: JSON.stringify({ allow_internal: state.settings.allowInternalErase, method, compliance_profile: state.selectedComplianceProfile, ...postErasePayload() }),
       });
       started.push({ disk, jobId: payload.job_id });
     } catch (error) {
@@ -1282,7 +1325,7 @@ async function nvmeEraseSelectedDisk(method = "format") {
       const payload = await fetchJson(`/api/disks/${disk.name}/nvme-erase`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ allow_internal: state.settings.allowInternalErase, method, compliance_profile: state.selectedComplianceProfile }),
+        body: JSON.stringify({ allow_internal: state.settings.allowInternalErase, method, compliance_profile: state.selectedComplianceProfile, ...postErasePayload() }),
       });
       started.push({ disk, jobId: payload.job_id });
     } catch (error) {
@@ -1333,6 +1376,15 @@ function bindSettings() {
       renderNvmeEraseOptions(payload.nvme_erase);
     }
     setControlsBusy();
+  };
+  byId("postEraseTestEnabled").onchange = (event) => {
+    state.settings.postEraseTestEnabled = event.target.checked;
+    persistSettings();
+    syncSettingsInputs();
+  };
+  byId("postEraseTestMode").onchange = (event) => {
+    state.settings.postEraseTestMode = event.target.value;
+    persistSettings();
   };
 }
 

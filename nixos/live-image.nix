@@ -195,6 +195,19 @@ in {
 
   networking.hostName = "driveproof-live";
   networking.networkmanager.enable = true;
+  services.avahi = {
+    enable = true;
+    nssmdns4 = true;
+    openFirewall = true;
+  };
+  services.printing = {
+    enable = true;
+    browsing = true;
+    browsed.enable = true;
+    drivers = with pkgs; [
+      cups-filters
+    ];
+  };
   time.timeZone = "Europe/Berlin";
   system.nixos.distroName = "DriveProof";
   boot.kernelParams = [
@@ -236,6 +249,8 @@ in {
   environment.systemPackages = with pkgs; [
     bashInteractive
     chromium
+    cups
+    cups-filters
     curl
     dpkg
     dosfstools
@@ -268,6 +283,7 @@ in {
     path = with pkgs; [
       coreutils
       chromium
+      cups
       dpkg
       dosfstools
       eject

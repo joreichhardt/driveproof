@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>DriveProof</title>
     <link rel="icon" type="image/png" href="{{ url_for('static', filename='assets/driveproof-logo.png') }}">
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=20260705-report-types1">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=20260705-combined-flow1">
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   </head>
   <body data-page="{{ active_page or 'dashboard' }}">
@@ -181,7 +181,20 @@
                   </div>
                   <div id="dangerZone" class="danger-zone hidden">
                     <div class="danger-title">Destructive erase</div>
-                    <div class="muted">Erase applies to the selected batch drives, or to the currently selected drive if no batch is selected. Reports include a signed certificate, audit chain, and export bundle.</div>
+                    <div class="muted">Erase applies to the selected batch drives, or to the currently selected drive if no batch is selected. Erase reports include a certificate; test reports stay separate.</div>
+                    <div class="settings-box compact">
+                      <label class="check-row">
+                        <input id="postEraseTestEnabled" type="checkbox">
+                        <span>Run test after erase</span>
+                      </label>
+                      <label class="field-label" for="postEraseTestMode">Post-erase test</label>
+                      <select id="postEraseTestMode" class="select-input">
+                        <option value="quick">Quick</option>
+                        <option value="smart_short">SMART Short</option>
+                        <option value="smart_extended">SMART Extended</option>
+                        <option value="full">Full Read</option>
+                      </select>
+                    </div>
                     <button id="eraseButton" class="erase-button">Single-pass zero erase</button>
                     <div id="secureEraseHint" class="muted">Checking ATA Secure Erase support.</div>
                     <button id="secureEraseButton" class="erase-button secondary">ATA Secure Erase</button>
@@ -266,6 +279,6 @@
       </footer>
     </div>
 
-    <script src="{{ url_for('static', filename='app.js') }}?v=20260705-report-types1"></script>
+    <script src="{{ url_for('static', filename='app.js') }}?v=20260705-combined-flow1"></script>
   </body>
   </html>

@@ -223,6 +223,13 @@ def report_filename(report: dict[str, Any]) -> str:
     return f"{stamp}_{slugify_filename_part(report_kind)}_{slugify_filename_part(model)}_{slugify_filename_part(serial)}_{report_id}.json"
 
 
+def device_folder_name(report: dict[str, Any]) -> str:
+    device = report.get("device") or {}
+    serial = device.get("serial") or device.get("wwn") or device.get("name") or "unknown"
+    model = device.get("model") or device.get("vendor") or device.get("kind") or "disk"
+    return f"{slugify_filename_part(model)}_{slugify_filename_part(serial)}"
+
+
 def classify_report_kind(report: dict[str, Any]) -> str:
     test = report.get("test") or {}
     mode = (report.get("source_job") or {}).get("mode") or test.get("type") or ""
@@ -953,15 +960,70 @@ def render_report_pdf_to_path(report_id: str, pdf_path: Path) -> None:
         raise RuntimeError(err.strip() or out.strip() or "PDF export failed.")
 
 
+def list_printers() -> list[dict[str, Any]]:
+    lpstat = tool_path("lpstat")
+    if not lpstat:
+        return []
+    rc, out, _err = run_command([lpstat, "-e"], timeout=10)
+    if rc != 0:
+        return []
+    printers = [{"name": line.strip()} for line in out.splitlines() if line.strip()]
+    rc, out, _err = run_command([lpstat, "-v"], timeout=10)
+    devices: dict[str, str] = {}
+    if rc == 0:
+        for line in out.splitlines():
+            match = re.match(r"device for ([^:]+):\s*(.+)", line.strip())
+            if match:
+                devices[match.group(1)] = match.group(2)
+    for printer in printers:
+        device_uri = devices.get(printer["name"], "")
+        printer["device_uri"] = device_uri
+        printer["network"] = device_uri.startswith(("ipp://", "ipps://", "socket://", "lpd://", "dnssd://"))
+        printer["usb"] = device_uri.startswith("usb://")
+    return printers
+
+
+def print_report_pdf(report_id: str, printer: str | None = None) -> dict[str, Any]:
+    lp = tool_path("lp")
+    if not lp:
+        raise RuntimeError("CUPS lp command is not available.")
+
+    printers = list_printers()
+    if not printers:
+        raise RuntimeError("No CUPS printers are configured or discovered.")
+    selected = printer or printers[0]["name"]
+    if selected not in {item["name"] for item in printers}:
+        raise RuntimeError(f"Unknown printer: {selected}")
+
+    report = load_report(report_id)
+    base_name = report_filename(report).removesuffix(".json")
+    tmp = tempfile.NamedTemporaryFile(prefix=f"{base_name}_", suffix=".pdf", delete=False)
+    tmp_path = Path(tmp.name)
+    tmp.close()
+    try:
+        render_report_pdf_to_path(report_id, tmp_path)
+        rc, out, err = run_command([lp, "-d", selected, "-t", base_name, str(tmp_path)], timeout=60)
+        if rc != 0:
+            raise RuntimeError(err.strip() or out.strip() or "Print job failed.")
+        return {
+            "status": "submitted",
+            "printer": selected,
+            "message": (out.strip() or "Print job submitted."),
+            "report_id": report_id,
+        }
+    finally:
+        tmp_path.unlink(missing_ok=True)
+
+
 def export_report_pdf(report_id: str, mountpoint: str | None = None) -> dict[str, Any]:
     report = load_report(report_id)
     target = find_export_target(mountpoint) if mountpoint else default_export_target()
 
-    export_dir = Path(target["mountpoint"]) / "DriveProof-Reports"
-    export_dir.mkdir(parents=True, exist_ok=True)
+    device_dir = Path(target["mountpoint"]) / "DriveProof-Reports" / device_folder_name(report)
+    device_dir.mkdir(parents=True, exist_ok=True)
 
     base_name = report_filename(report).removesuffix(".json")
-    bundle_dir = export_dir / base_name
+    bundle_dir = device_dir / base_name
     bundle_dir.mkdir(parents=True, exist_ok=True)
 
     pdf_path = bundle_dir / f"{base_name}.pdf"
@@ -975,47 +1037,68 @@ def export_report_pdf(report_id: str, mountpoint: str | None = None) -> dict[str
     render_report_pdf_to_path(report_id, pdf_path)
 
     json_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
-    certificate_path.write_text(json.dumps(report.get("certificate", {}), indent=2), encoding="utf-8")
-    audit_path.write_text(json.dumps(report.get("certificate", {}).get("audit_chain", []), indent=2), encoding="utf-8")
-    public_key_path.write_text(report.get("certificate", {}).get("public_key_pem") or signing_public_key_pem(), encoding="utf-8")
 
     def file_sha256(path: Path) -> str:
         return hashlib.sha256(path.read_bytes()).hexdigest()
+
+    files = {
+        pdf_path.name: file_sha256(pdf_path),
+        json_path.name: file_sha256(json_path),
+    }
+    has_certificate = report.get("report_kind") == "erase" and bool(report.get("certificate"))
+    if has_certificate:
+        certificate_path.write_text(json.dumps(report.get("certificate", {}), indent=2), encoding="utf-8")
+        audit_path.write_text(json.dumps(report.get("certificate", {}).get("audit_chain", []), indent=2), encoding="utf-8")
+        public_key_path.write_text(report.get("certificate", {}).get("public_key_pem") or signing_public_key_pem(), encoding="utf-8")
+        files.update(
+            {
+                certificate_path.name: file_sha256(certificate_path),
+                audit_path.name: file_sha256(audit_path),
+                public_key_path.name: file_sha256(public_key_path),
+            }
+        )
 
     manifest = {
         "schema": "driveproof.bundle.v1",
         "created_at": utc_now_iso(),
         "report_id": report_id,
-        "certificate_type": report.get("certificate", {}).get("type"),
-        "files": {
-            pdf_path.name: file_sha256(pdf_path),
-            json_path.name: file_sha256(json_path),
-            certificate_path.name: file_sha256(certificate_path),
-            audit_path.name: file_sha256(audit_path),
-            public_key_path.name: file_sha256(public_key_path),
-        },
+        "report_kind": report.get("report_kind"),
+        "report_kind_label": report.get("report_kind_label"),
+        "device_folder": device_dir.name,
+        "certificate_type": report.get("certificate", {}).get("type") if has_certificate else None,
+        "files": files,
         "report_sha256": report.get("certificate", {}).get("report_sha256"),
         "audit_chain_sha256": report.get("certificate", {}).get("audit_chain_sha256"),
         "public_key_fingerprint": report.get("certificate", {}).get("signing_key_fingerprint"),
     }
     manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
-    signature_path.write_text(sign_bytes(canonical_json_bytes(manifest)), encoding="utf-8")
+    if has_certificate:
+        signature_path.write_text(sign_bytes(canonical_json_bytes(manifest)), encoding="utf-8")
 
-    return {
+    result = {
         "report_id": report_id,
         "status": "saved",
         "message": f"Saved to {target['label']}",
         "target": target,
+        "device_path": str(device_dir),
+        "device_folder": device_dir.name,
         "bundle_path": str(bundle_dir),
         "bundle_name": bundle_dir.name,
         "pdf_path": str(pdf_path),
         "json_path": str(json_path),
         "pdf_name": pdf_path.name,
         "json_name": json_path.name,
-        "certificate_name": certificate_path.name,
         "manifest_name": manifest_path.name,
-        "signature_name": signature_path.name,
+        "has_certificate": has_certificate,
     }
+    if has_certificate:
+        result.update(
+            {
+                "certificate_name": certificate_path.name,
+                "signature_name": signature_path.name,
+            }
+        )
+    return result
 
 
 def update_report_export_status(report_id: str, export: dict[str, Any]) -> None:
@@ -1050,21 +1133,25 @@ def verify_export_bundle(bundle_path: str) -> dict[str, Any]:
     manifest_path = bundle / "manifest.json"
     signature_path = bundle / "manifest.sig"
     public_key_path = bundle / "public-key.pem"
-    if not manifest_path.exists() or not signature_path.exists() or not public_key_path.exists():
-        raise FileNotFoundError("Bundle manifest, signature, or public key is missing.")
+    if not manifest_path.exists():
+        raise FileNotFoundError("Bundle manifest is missing.")
 
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    signature = signature_path.read_text(encoding="utf-8").strip()
-    public_key = public_key_path.read_text(encoding="utf-8")
     file_checks: dict[str, bool] = {}
     for name, expected_hash in (manifest.get("files") or {}).items():
         file_path = bundle / name
         file_checks[name] = file_path.exists() and hashlib.sha256(file_path.read_bytes()).hexdigest() == expected_hash
 
-    signature_valid = verify_signature(public_key, canonical_json_bytes(manifest), signature)
+    signature_valid = None
+    if signature_path.exists() or public_key_path.exists():
+        if not signature_path.exists() or not public_key_path.exists():
+            raise FileNotFoundError("Signed bundle is missing manifest signature or public key.")
+        signature = signature_path.read_text(encoding="utf-8").strip()
+        public_key = public_key_path.read_text(encoding="utf-8")
+        signature_valid = verify_signature(public_key, canonical_json_bytes(manifest), signature)
     return {
         "bundle_path": str(bundle),
-        "valid": signature_valid and all(file_checks.values()),
+        "valid": (signature_valid is not False) and all(file_checks.values()),
         "signature_valid": signature_valid,
         "file_checks": file_checks,
         "manifest": manifest,
@@ -1928,7 +2015,10 @@ def enrich_report(report: dict[str, Any]) -> dict[str, Any]:
         "canonical_scope": "report JSON excluding integrity, certificate, derived overview, and rendered SMART rows",
         "sha256": report_sha256(report),
     }
-    report["certificate"] = certificate_payload(report)
+    if report["report_kind"] == "erase":
+        report["certificate"] = certificate_payload(report)
+    else:
+        report.pop("certificate", None)
     return report
 
 
@@ -2373,7 +2463,7 @@ def import_exported_reports() -> None:
         report_dir = Path(target["mountpoint"]) / "DriveProof-Reports"
         if not report_dir.is_dir():
             continue
-        sources = list(report_dir.glob("*.json")) + list(report_dir.glob("*/report.json"))
+        sources = list(report_dir.glob("*.json")) + list(report_dir.glob("*/report.json")) + list(report_dir.glob("*/*/report.json"))
         for source in sources:
             try:
                 payload = json.loads(source.read_text(encoding="utf-8"))
@@ -2432,6 +2522,17 @@ def persist_job_state(job: TestJob) -> None:
 
 
 def start_test_job(device: str, mode: str, options: dict[str, Any] | None = None) -> str:
+    job_id = uuid.uuid4().hex[:12]
+    job = TestJob(id=job_id, device=device, mode=mode, created_at=utc_now_iso(), options=options or {})
+    with jobs_lock:
+        jobs[job_id] = job
+    save_job(job)
+    thread = threading.Thread(target=run_test_job, args=(job_id,), daemon=True)
+    thread.start()
+    return job_id
+
+
+def start_job(device: str, mode: str, options: dict[str, Any] | None = None) -> str:
     job_id = uuid.uuid4().hex[:12]
     job = TestJob(id=job_id, device=device, mode=mode, created_at=utc_now_iso(), options=options or {})
     with jobs_lock:
@@ -2748,6 +2849,8 @@ def run_zero_erase(disk: dict[str, Any], job: TestJob, allow_internal: bool = Fa
         "erasure": {
             "method": "single_pass_zero_overwrite",
             "tool": "dd",
+            "coverage": "full_device_overwrite",
+            "observability": "DriveProof wrote zeros across the full reported device size and recorded the byte count.",
             "started_at": started_iso,
             "completed_at": utc_now_iso(),
             "device": disk["path"],
@@ -2780,6 +2883,7 @@ def run_secure_erase_ata(
 
     erase_allowed(disk, allow_internal=allow_internal)
     actions = unmount_disk_children(disk["name"])
+    before_identity_ok, before_identity = hdparm_identity(disk["path"])
     password = f"wipe-{uuid.uuid4().hex[:8]}"
     method_flag = "--security-erase-enhanced" if method == "enhanced" else "--security-erase"
     label = "ATA Enhanced Secure Erase" if method == "enhanced" else "ATA Secure Erase"
@@ -2821,6 +2925,8 @@ def run_secure_erase_ata(
     persist_job_state(job)
     verification = verify_erase_samples(disk["path"], disk["size_bytes"], expected_byte=0)
     duration = max(0.001, time.time() - started)
+    after_identity_ok, after_identity = hdparm_identity(disk["path"])
+    implausibly_fast = bool(disk.get("rotational") and disk.get("size_bytes", 0) >= 500 * 1000 * 1000 * 1000 and duration < 300)
     compliance = compliance_from_options(job.options)
     return {
         "type": "secure_erase_ata",
@@ -2833,11 +2939,22 @@ def run_secure_erase_ata(
         "erasure": {
             "method": "ata_secure_erase_enhanced" if enhanced else "ata_secure_erase",
             "tool": "hdparm",
+            "coverage": "firmware_controller_erase",
+            "observability": "DriveProof issued an ATA firmware erase command and waited for hdparm to return; the internal erase work is performed by the drive firmware.",
+            "implausibly_fast_warning": "Large rotational drive completed ATA firmware erase unusually quickly; treat this result as lower confidence unless independently verified." if implausibly_fast else None,
             "started_at": started_iso,
             "completed_at": utc_now_iso(),
             "device": disk["path"],
             "serial": disk.get("serial"),
             "compliance_profile": compliance,
+            "hdparm_set_password_stdout": set_pass.stdout.strip(),
+            "hdparm_set_password_stderr": set_pass.stderr.strip(),
+            "hdparm_erase_stdout": stdout.strip(),
+            "hdparm_erase_stderr": stderr.strip(),
+            "hdparm_identity_before_available": before_identity_ok,
+            "hdparm_identity_before_excerpt": before_identity[:4000],
+            "hdparm_identity_after_available": after_identity_ok,
+            "hdparm_identity_after_excerpt": after_identity[:4000],
             "verification": "hdparm exit status plus post-erase sample reads. Firmware erase implementations may not always return a zero pattern after completion.",
             "verification_result": verification,
         },
@@ -2894,11 +3011,15 @@ def run_nvme_format_erase(disk: dict[str, Any], job: TestJob, allow_internal: bo
         "erasure": {
             "method": "nvme_format_nvm_ses_1_user_data_erase",
             "tool": "nvme-cli",
+            "coverage": "firmware_controller_erase",
+            "observability": "DriveProof issued an NVMe Format command with secure erase setting 1 and waited for nvme-cli to return; the internal erase work is performed by the controller firmware.",
             "started_at": started_iso,
             "completed_at": utc_now_iso(),
             "device": disk["path"],
             "serial": disk.get("serial"),
             "compliance_profile": compliance,
+            "nvme_stdout": stdout.strip(),
+            "nvme_stderr": stderr.strip(),
             "verification": "nvme-cli exit status plus post-erase sample reads. NVMe controller behavior can vary by firmware.",
             "verification_result": verification,
         },
@@ -2993,6 +3114,7 @@ def run_nvme_sanitize_erase(
     verification = verify_erase_samples(disk["path"], disk["size_bytes"], expected_byte=0)
 
     duration = max(0.001, time.time() - started)
+    implausibly_fast = bool(method == "block" and disk.get("size_bytes", 0) >= 500 * 1000 * 1000 * 1000 and duration < 300)
     compliance = compliance_from_options(job.options)
     return {
         "type": f"nvme_sanitize_{method}",
@@ -3004,16 +3126,62 @@ def run_nvme_sanitize_erase(
         "erasure": {
             "method": f"nvme_sanitize_{method_name}",
             "tool": "nvme-cli",
+            "coverage": "firmware_controller_erase",
+            "observability": "DriveProof issued an NVMe Sanitize command and monitored the sanitize log; the internal erase work is performed by the controller firmware.",
+            "implausibly_fast_warning": "Large drive completed NVMe block sanitize unusually quickly; treat this result as lower confidence unless independently verified." if implausibly_fast else None,
             "started_at": started_iso,
             "completed_at": utc_now_iso(),
             "device": disk["path"],
             "serial": disk.get("serial"),
             "sanitize_log": final_log,
+            "nvme_sanitize_stdout": proc.stdout.strip(),
+            "nvme_sanitize_stderr": proc.stderr.strip(),
             "compliance_profile": compliance,
             "verification": "nvme-cli sanitize completion plus post-erase sample reads. NVMe controller behavior can vary by firmware.",
             "verification_result": verification,
         },
     }
+
+
+def execute_job_mode(job: TestJob, disk: dict[str, Any], mode: str) -> dict[str, Any]:
+    allow_internal_erase = bool(job.options.get("allow_internal_erase"))
+    if mode in {"quick", "deep_sample"}:
+        ranges = sample_offsets(disk["size_bytes"], mode)
+        return read_segments(disk["path"], ranges, job)
+    if mode == "smart_short":
+        return run_smart_selftest(disk["path"], job, "short")
+    if mode == "full":
+        return full_read_scan(disk["path"], disk["size_bytes"], job)
+    if mode == "smart_extended":
+        return run_smart_extended_test(disk["path"], job)
+    if mode == "erase_zero":
+        return run_zero_erase(disk, job, allow_internal=allow_internal_erase)
+    if mode in {"secure_erase_ata", "secure_erase_ata_enhanced"}:
+        return run_secure_erase_ata(
+            disk,
+            job,
+            allow_internal=allow_internal_erase,
+            enhanced=mode == "secure_erase_ata_enhanced",
+        )
+    if mode == "nvme_format":
+        return run_nvme_format_erase(disk, job, allow_internal=allow_internal_erase)
+    if mode in {"nvme_sanitize_crypto", "nvme_sanitize_block"}:
+        return run_nvme_sanitize_erase(
+            disk,
+            job,
+            method="crypto" if mode == "nvme_sanitize_crypto" else "block",
+            allow_internal=allow_internal_erase,
+        )
+    raise ValueError(f"Unsupported mode: {mode}")
+
+
+def save_and_export_job_report(job: TestJob, disk: dict[str, Any], smart: dict[str, Any], health: dict[str, Any], test_result: dict[str, Any]) -> dict[str, Any]:
+    report = build_report_payload(disk, smart, health, test_result, source_job=job)
+    report_id = save_report(report)
+    job.current_step = "Saving report to export partition"
+    save_job(job)
+    export = auto_export_report_pdf(report_id)
+    return {"report_id": report_id, "report": report, "export": export}
 
 
 def run_test_job(job_id: str) -> None:
@@ -3032,37 +3200,31 @@ def run_test_job(job_id: str) -> None:
         smart = get_smart_data(disk["path"])
         health = compute_health(disk, smart)
 
-        allow_internal_erase = bool(job.options.get("allow_internal_erase"))
+        test_result = execute_job_mode(job, disk, job.mode)
+        post_test_mode = job.options.get("post_test_mode")
+        is_erase_report = classify_report_kind({"test": test_result, "source_job": {"mode": job.mode}}) == "erase"
+        allowed_post_modes = {"quick", "deep_sample", "smart_short", "smart_extended", "full"}
+        if post_test_mode and (not is_erase_report or post_test_mode not in allowed_post_modes):
+            raise ValueError(f"Unsupported post erase test mode: {post_test_mode}")
 
-        if job.mode in {"quick", "deep_sample"}:
-            ranges = sample_offsets(disk["size_bytes"], job.mode)
-            test_result = read_segments(disk["path"], ranges, job)
-        elif job.mode == "smart_short":
-            test_result = run_smart_selftest(disk["path"], job, "short")
-        elif job.mode == "full":
-            test_result = full_read_scan(disk["path"], disk["size_bytes"], job)
-        elif job.mode == "smart_extended":
-            test_result = run_smart_extended_test(disk["path"], job)
-        elif job.mode == "erase_zero":
-            test_result = run_zero_erase(disk, job, allow_internal=allow_internal_erase)
-        elif job.mode in {"secure_erase_ata", "secure_erase_ata_enhanced"}:
-            test_result = run_secure_erase_ata(
-                disk,
-                job,
-                allow_internal=allow_internal_erase,
-                enhanced=job.mode == "secure_erase_ata_enhanced",
-            )
-        elif job.mode == "nvme_format":
-            test_result = run_nvme_format_erase(disk, job, allow_internal=allow_internal_erase)
-        elif job.mode in {"nvme_sanitize_crypto", "nvme_sanitize_block"}:
-            test_result = run_nvme_sanitize_erase(
-                disk,
-                job,
-                method="crypto" if job.mode == "nvme_sanitize_crypto" else "block",
-                allow_internal=allow_internal_erase,
-            )
-        else:
-            raise ValueError(f"Unsupported mode: {job.mode}")
+        result = save_and_export_job_report(job, disk, smart, health, test_result)
+        post_result = None
+
+        if is_erase_report and post_test_mode:
+            with jobs_lock:
+                job.status = "running"
+                job.progress = 0.0
+                job.current_step = f"Running post-erase test: {post_test_mode}"
+                job.messages.append(f"Post-erase test started: {post_test_mode}")
+                job.options["post_erase_parent_report_id"] = result["report_id"]
+                save_job(job)
+
+            disk = get_disk(job.device)
+            smart = get_smart_data(disk["path"])
+            health = compute_health(disk, smart)
+            post_test_result = execute_job_mode(job, disk, post_test_mode)
+            post_result = save_and_export_job_report(job, disk, smart, health, post_test_result)
+            job.messages.append("Post-erase test completed")
 
         with jobs_lock:
             job.progress = 1.0
@@ -3070,13 +3232,7 @@ def run_test_job(job_id: str) -> None:
             job.current_step = "Done"
             if "Test completed" not in job.messages:
                 job.messages.append("Test completed")
-            report = build_report_payload(disk, smart, health, test_result, source_job=job)
-            report_id = save_report(report)
-            job.current_step = "Saving report to export partition"
-            save_job(job)
-            export = auto_export_report_pdf(report_id)
-            job.current_step = "Done"
-            job.result = {"report_id": report_id, "report": report, "export": export}
+            job.result = {**result, "post_test": post_result}
             save_job(job)
     except Exception as exc:
         with jobs_lock:
@@ -3151,6 +3307,8 @@ def certificate_view(report_id: str) -> str:
         report = load_report(report_id)
     except FileNotFoundError:
         abort(404)
+    if report.get("report_kind") != "erase" or not report.get("certificate"):
+        abort(404)
     return render_template("certificate.html", report=report, certificate=report.get("certificate", {}), github_qr_svg=github_qr_inline_svg())
 
 
@@ -3161,6 +3319,8 @@ def api_verify_certificate(report_id: str):
         return jsonify({"error": "Report not found"}), 404
 
     raw = json.loads(path.read_text(encoding="utf-8"))
+    if classify_report_kind(raw) != "erase":
+        return jsonify({"error": "Certificates are only generated for erase reports."}), 404
     certificate = raw.get("certificate") or {}
     expected_report = enrich_report(dict(raw))
     expected = expected_report.get("certificate") or {}
@@ -3303,23 +3463,18 @@ def api_erase_disk(device_name: str):
     payload = request.get_json(silent=True) or {}
     allow_internal = bool(payload.get("allow_internal"))
     compliance_profile = payload.get("compliance_profile") or "nist_clear"
+    post_test_mode = (payload.get("post_test_mode") or "").strip() or None
+    if post_test_mode and post_test_mode not in {"quick", "deep_sample", "smart_short", "smart_extended", "full"}:
+        return jsonify({"error": "post_test_mode must be quick, deep_sample, smart_short, smart_extended, or full"}), 400
     try:
         disk = get_disk(device_name)
         if has_active_job_for_device(device_name):
             return jsonify({"error": "An app job is already running for this drive."}), 409
-        job_id = uuid.uuid4().hex[:12]
-        job = TestJob(
-            id=job_id,
-            device=device_name,
-            mode="erase_zero",
-            created_at=utc_now_iso(),
-            options={"allow_internal_erase": allow_internal, "compliance_profile": compliance_profile},
+        job_id = start_job(
+            device_name,
+            "erase_zero",
+            {"allow_internal_erase": allow_internal, "compliance_profile": compliance_profile, "post_test_mode": post_test_mode},
         )
-        with jobs_lock:
-            jobs[job_id] = job
-        save_job(job)
-        thread = threading.Thread(target=run_test_job, args=(job_id,), daemon=True)
-        thread.start()
         return jsonify({"job_id": job_id})
     except Exception as exc:
         return jsonify({"error": str(exc)}), 500
@@ -3331,6 +3486,9 @@ def api_secure_erase_disk(device_name: str):
     allow_internal = bool(payload.get("allow_internal"))
     method = (payload.get("method") or "basic").strip().lower()
     compliance_profile = payload.get("compliance_profile") or ("nist_purge" if method == "enhanced" else "nist_clear")
+    post_test_mode = (payload.get("post_test_mode") or "").strip() or None
+    if post_test_mode and post_test_mode not in {"quick", "deep_sample", "smart_short", "smart_extended", "full"}:
+        return jsonify({"error": "post_test_mode must be quick, deep_sample, smart_short, smart_extended, or full"}), 400
     if method not in {"basic", "enhanced"}:
         return jsonify({"error": "method must be basic or enhanced"}), 400
     try:
@@ -3344,19 +3502,16 @@ def api_secure_erase_disk(device_name: str):
             return jsonify({"error": "ATA Secure Erase is not supported by this drive."}), 400
         if has_active_job_for_device(device_name):
             return jsonify({"error": "An app job is already running for this drive."}), 409
-        job_id = uuid.uuid4().hex[:12]
-        job = TestJob(
-            id=job_id,
-            device=device_name,
-            mode="secure_erase_ata_enhanced" if method == "enhanced" else "secure_erase_ata",
-            created_at=utc_now_iso(),
-            options={"allow_internal_erase": allow_internal, "secure_erase_method": method, "compliance_profile": compliance_profile},
+        job_id = start_job(
+            device_name,
+            "secure_erase_ata_enhanced" if method == "enhanced" else "secure_erase_ata",
+            {
+                "allow_internal_erase": allow_internal,
+                "secure_erase_method": method,
+                "compliance_profile": compliance_profile,
+                "post_test_mode": post_test_mode,
+            },
         )
-        with jobs_lock:
-            jobs[job_id] = job
-        save_job(job)
-        thread = threading.Thread(target=run_test_job, args=(job_id,), daemon=True)
-        thread.start()
         return jsonify({"job_id": job_id})
     except Exception as exc:
         return jsonify({"error": str(exc)}), 500
@@ -3368,6 +3523,9 @@ def api_nvme_erase_disk(device_name: str):
     allow_internal = bool(payload.get("allow_internal"))
     method = (payload.get("method") or "format").strip().lower()
     compliance_profile = payload.get("compliance_profile") or "nist_purge"
+    post_test_mode = (payload.get("post_test_mode") or "").strip() or None
+    if post_test_mode and post_test_mode not in {"quick", "deep_sample", "smart_short", "smart_extended", "full"}:
+        return jsonify({"error": "post_test_mode must be quick, deep_sample, smart_short, smart_extended, or full"}), 400
     allowed_methods = {"format", "sanitize_crypto", "sanitize_block"}
     if method not in allowed_methods:
         return jsonify({"error": "method must be format, sanitize_crypto, or sanitize_block"}), 400
@@ -3382,23 +3540,20 @@ def api_nvme_erase_disk(device_name: str):
             return jsonify({"error": "NVMe Sanitize Block Erase is not supported by this controller."}), 400
         if has_active_job_for_device(device_name):
             return jsonify({"error": "An app job is already running for this drive."}), 409
-        job_id = uuid.uuid4().hex[:12]
-        job = TestJob(
-            id=job_id,
-            device=device_name,
-            mode={
+        job_id = start_job(
+            device_name,
+            {
                 "format": "nvme_format",
                 "sanitize_crypto": "nvme_sanitize_crypto",
                 "sanitize_block": "nvme_sanitize_block",
             }[method],
-            created_at=utc_now_iso(),
-            options={"allow_internal_erase": allow_internal, "nvme_erase_method": method, "compliance_profile": compliance_profile},
+            {
+                "allow_internal_erase": allow_internal,
+                "nvme_erase_method": method,
+                "compliance_profile": compliance_profile,
+                "post_test_mode": post_test_mode,
+            },
         )
-        with jobs_lock:
-            jobs[job_id] = job
-        save_job(job)
-        thread = threading.Thread(target=run_test_job, args=(job_id,), daemon=True)
-        thread.start()
         return jsonify({"job_id": job_id})
     except Exception as exc:
         return jsonify({"error": str(exc)}), 500
@@ -3459,6 +3614,11 @@ def api_export_targets():
         return jsonify({"targets": list_export_targets(), "pdf_engine": chrome_binary()})
     except Exception as exc:
         return jsonify({"error": str(exc)}), 500
+
+
+@app.get("/api/printers")
+def api_printers():
+    return jsonify({"printers": list_printers(), "printing_available": bool(tool_path("lp"))})
 
 
 @app.get("/api/compliance-profiles")
@@ -3531,6 +3691,18 @@ def api_export_report_pdf(report_id: str):
         result = export_report_pdf(report_id, mountpoint or None)
         update_report_export_status(report_id, result)
         return jsonify(result)
+    except FileNotFoundError as exc:
+        return jsonify({"error": str(exc)}), 404
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 500
+
+
+@app.post("/api/reports/<report_id>/print")
+def api_print_report(report_id: str):
+    payload = request.get_json(silent=True) or {}
+    printer = (payload.get("printer") or "").strip() or None
+    try:
+        return jsonify(print_report_pdf(report_id, printer))
     except FileNotFoundError as exc:
         return jsonify({"error": str(exc)}), 404
     except Exception as exc:

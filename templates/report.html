@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Report {{ report.report_id }}</title>
     <link rel="icon" type="image/png" href="{{ url_for('static', filename='assets/driveproof-logo.png') }}">
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=20260705-report-types1">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=20260705-report-header1">
   </head>
   <body class="report-body">
     <main class="report-page report-page-a4">
@@ -27,8 +27,11 @@
         </div>
         <div class="report-actions">
           <a class="icon-button legal-back-link" href="/">Back to app</a>
+          {% if report.report_kind == 'erase' %}
           <a class="icon-button legal-back-link" href="/certificate/{{ report.report_id }}">Certificate</a>
+          {% endif %}
           <a class="icon-button legal-back-link" href="/report/{{ report.report_id }}/pdf">Download PDF</a>
+          <button id="printReportButton" class="icon-button legal-back-link" type="button">Print</button>
           <button class="icon-button legal-back-link" onclick="window.print()">Save as PDF</button>
         </div>
       </header>
@@ -163,6 +166,15 @@
           {% endif %}
           {% if report.test.erasure %}
           <p>Erase Method: {{ report.test.erasure.method }}</p>
+          {% if report.test.erasure.coverage %}
+          <p>Erase Coverage: {{ report.test.erasure.coverage }}</p>
+          {% endif %}
+          {% if report.test.erasure.observability %}
+          <p>Erase Observability: {{ report.test.erasure.observability }}</p>
+          {% endif %}
+          {% if report.test.erasure.implausibly_fast_warning %}
+          <p>Warning: {{ report.test.erasure.implausibly_fast_warning }}</p>
+          {% endif %}
           <p>Erase Verification: {{ report.test.erasure.verification }}</p>
           {% if report.test.erasure.verification_result %}
           <p>Verification Result: {{ report.test.erasure.verification_result.statement }}</p>
@@ -205,5 +217,40 @@
         <a href="/legal/third-party">Third-Party Licenses</a>
       </footer>
     </main>
+    <script>
+      document.getElementById("printReportButton")?.addEventListener("click", async () => {
+        const button = document.getElementById("printReportButton");
+        const previous = button.textContent;
+        try {
+          button.disabled = true;
+          button.textContent = "Loading printers";
+          const payload = await fetch("/api/printers").then((response) => response.json());
+          const printers = payload.printers || [];
+          if (!printers.length) {
+            alert("No CUPS printers found. Configure an IPP/AirPrint or USB printer first.");
+            return;
+          }
+          const names = printers.map((printer) => printer.name);
+          const selected = names.length === 1
+            ? names[0]
+            : prompt(`Printer name:\n${names.join("\n")}`, names[0]);
+          if (!selected) return;
+          button.textContent = "Printing";
+          const response = await fetch("/api/reports/{{ report.report_id }}/print", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ printer: selected }),
+          });
+          const result = await response.json();
+          if (!response.ok) throw new Error(result.error || "Print failed");
+          alert(result.message || `Print job submitted to ${selected}.`);
+        } catch (error) {
+          alert(`Print error: ${error.message}`);
+        } finally {
+          button.disabled = false;
+          button.textContent = previous;
+        }
+      });
+    </script>
   </body>
   </html>

@@ -63,8 +63,14 @@
         <div class="report-summary-grid">
           <div class="summary-item"><span>Method</span><strong>{{ report.test.erasure.method }}</strong></div>
           <div class="summary-item"><span>Tool</span><strong>{{ report.test.erasure.tool }}</strong></div>
+          {% if report.test.erasure.coverage %}
+          <div class="summary-item"><span>Coverage</span><strong>{{ report.test.erasure.coverage }}</strong></div>
+          {% endif %}
           <div class="summary-item"><span>Started</span><strong>{{ report.test.erasure.started_at }}</strong></div>
           <div class="summary-item"><span>Completed</span><strong>{{ report.test.erasure.completed_at }}</strong></div>
+          {% if report.test.erasure.implausibly_fast_warning %}
+          <div class="summary-item wide"><span>Warning</span><strong>{{ report.test.erasure.implausibly_fast_warning }}</strong></div>
+          {% endif %}
           <div class="summary-item wide"><span>Verification</span><strong>{{ report.test.erasure.verification }}</strong></div>
           {% if report.test.erasure.verification_result %}
           <div class="summary-item"><span>Samples</span><strong>{{ report.test.erasure.verification_result.sample_count }}</strong></div>

@@ -82,8 +82,8 @@ up a full desktop environment.
 - compliance-oriented report profiles for resale, NIST Clear, and NIST Purge workflows
 - report SHA-256 fingerprint and basic audit trail for stronger resale evidence
 - dedicated pages for testing, erasure, reports, and generated certificates
-- Ed25519-signed DriveProof certificates with audit-chain hash and verification endpoint
-- signed export bundles for the FAT32 report partition
+- Ed25519-signed DriveProof certificates for erase reports
+- optional combined erase-then-test workflow with separate erase and test reports
 - NixOS live image with automatic app start and Chromium kiosk mode
 
 ## Local Run on Ubuntu/Debian
@@ -451,24 +451,28 @@ vendor-specific adapter has found the expected binary name, copied it to the
 tools directory, marked it executable, and verified it with a version/probe
 command. It should not blindly execute vendor installers.
 
-Each finished report is exported into its own folder under:
+Reports are grouped by physical drive first. Each finished report is exported
+into its own subfolder under the drive folder:
 
 ```text
-DriveProof-Reports/<timestamp>_<model>_<serial>_<report-id>/
+DriveProof-Reports/<model>_<serial>/<timestamp>_<type>_<model>_<serial>_<report-id>/
 ```
 
-The bundle contains:
+Every report bundle contains:
 - `report.pdf`
 - `report.json`
+- `manifest.json`
+
+Erase report bundles additionally contain:
 - `certificate.json`
 - `audit-chain.json`
 - `public-key.pem`
-- `manifest.json`
 - `manifest.sig`
 
-`manifest.json` contains SHA-256 hashes of all bundle files. `manifest.sig` is
-an Ed25519 signature over the canonical manifest JSON. This makes changes to the
-PDF, JSON report, certificate, audit chain, or public key detectable.
+`manifest.json` contains SHA-256 hashes of all bundle files. For erase reports,
+`manifest.sig` is an Ed25519 signature over the canonical manifest JSON. Test
+reports intentionally do not create a certificate; they are diagnostic resale
+reports, not erasure certificates.
 
 ## Erase Functions
 
@@ -539,9 +543,9 @@ Reports include:
 - device identity and serial number where available
 - audit events
 - SHA-256 fingerprint over the report JSON content
-- a DriveProof certificate view with report hash, audit-chain hash, and Ed25519 signature
-- a local verification endpoint at `/api/certificates/<report_id>/verify`
-- signed export bundle verification at `/api/reports/<report_id>/verify-export`
+- for erase reports: a DriveProof certificate view with report hash, audit-chain hash, and Ed25519 signature
+- for erase reports: a local verification endpoint at `/api/certificates/<report_id>/verify`
+- export bundle verification at `/api/reports/<report_id>/verify-export`
 
 Application pages:
 - `/`: dashboard
