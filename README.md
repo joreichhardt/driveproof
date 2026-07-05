@@ -449,8 +449,10 @@ PDF, JSON report, certificate, audit chain, or public key detectable.
 ## Erase Functions
 
 DriveProof separates destructive actions from diagnostics. Erase functions are
-hidden behind explicit checkboxes and require typing the exact device path or
-serial number before a job starts.
+hidden behind explicit safety checkboxes. Batch erase actions apply to the
+selected drives, or to the currently selected drive when no batch selection is
+active. Internal drives remain protected unless internal erase is explicitly
+enabled.
 
 DriveProof distinguishes software overwrite from firmware erase:
 - software overwrite writes to the block device from the live system
@@ -464,9 +466,25 @@ Available erase modes:
 - `ATA Enhanced Secure Erase`: firmware-based enhanced erase using
   `hdparm --security-erase-enhanced` only when the drive explicitly reports
   enhanced erase support
-- `NVMe Format Erase`: uses `nvme format --ses=1 --force`
-- `NVMe Sanitize Crypto`: uses `nvme sanitize --sanact=4`
-- `NVMe Sanitize Block`: uses `nvme sanitize --sanact=2`
+- `NVMe Format Erase`: uses `nvme format --ses=1 --force`. This asks the NVMe
+  controller to format the namespace and perform a user-data erase. On many
+  consumer SSDs this is the practical fast erase path, but the exact behavior is
+  firmware-dependent and may be scoped to the selected namespace.
+- `NVMe Sanitize Crypto`: uses `nvme sanitize --sanact=4`. This requests a
+  cryptographic erase by destroying or replacing the media encryption key. It is
+  typically very fast when the drive uses always-on internal encryption, but it
+  is only meaningful when the device actually supports crypto sanitize.
+- `NVMe Sanitize Block`: uses `nvme sanitize --sanact=2`. This requests a
+  controller-managed block erase of the underlying media. It can take much
+  longer than crypto sanitize, may continue internally after command submission,
+  and depends on sanitize support reported by the controller.
+
+NVMe Format and NVMe Sanitize are not the same command family. Format is a
+namespace format operation with a secure erase setting. Sanitize is a controller
+sanitize operation intended to make previously written user data unrecoverable
+across the affected media according to the drive's implementation. DriveProof
+offers only methods that `nvme-cli` and the controller report as available, and
+records the chosen method in the report.
 
 Drive type handling:
 - HDDs are detected and offered HDD-oriented read tests plus ATA firmware erase
