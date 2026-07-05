@@ -8,7 +8,7 @@
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=20260705-combined-flow1">
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   </head>
-  <body data-page="{{ active_page or 'dashboard' }}">
+  <body data-page="{{ active_page or 'drives' }}" data-device="{{ selected_device or '' }}">
     <div class="app-shell">
       <header class="topbar">
         <div class="brand-block">
@@ -21,9 +21,7 @@
         </div>
         <div class="topbar-actions">
           <nav class="app-nav" aria-label="Main navigation">
-            <a class="nav-link {{ 'active' if active_page == 'dashboard' else '' }}" href="/">Dashboard</a>
-            <a class="nav-link {{ 'active' if active_page == 'test' else '' }}" href="/test">Test</a>
-            <a class="nav-link {{ 'active' if active_page == 'erase' else '' }}" href="/erase">Erase</a>
+            <a class="nav-link {{ 'active' if active_page in ['drives', 'device'] else '' }}" href="/">Drives</a>
             <a class="nav-link {{ 'active' if active_page == 'jobs' else '' }}" href="/jobs">Jobs</a>
             <a class="nav-link {{ 'active' if active_page == 'reports' else '' }}" href="/reports">Reports</a>
             <a class="nav-link {{ 'active' if active_page == 'settings' else '' }}" href="/settings">Settings</a>
@@ -42,7 +40,7 @@
       </header>
 
       <main class="layout">
-        <section class="panel panel-list">
+        <section class="panel drives-section">
           <div class="section-head">
             <h2>Drives</h2>
             <p id="envHint" class="muted"></p>
@@ -83,33 +81,13 @@
         </section>
 
         <section class="panel panel-detail">
-          <div class="dashboard-section">
-            <div class="content-grid lower-grid">
-              <div class="panel inset">
-                <div class="section-head">
-                  <h2>Drive overview</h2>
-                  <p class="muted">Detected drives grouped by type.</p>
-                </div>
-                <div id="dashboardDiskGroups" class="dashboard-grid"></div>
-              </div>
-            </div>
-            <div class="content-grid lower-grid">
-              <div class="panel inset">
-                <div class="section-head">
-                  <h2>Controllers</h2>
-                  <p class="muted">HBA, RAID, and vendor-tool visibility.</p>
-                </div>
-                <div id="dashboardControllers" class="dashboard-grid"></div>
-              </div>
-            </div>
-          </div>
-
           <div id="emptyState" class="empty-state">
             <h2>No drive selected</h2>
-            <p>Select a drive on the left, review SMART data, and start a read test.</p>
+            <p>Go back to Drives and select a device.</p>
           </div>
 
           <div id="detailView" class="hidden">
+            <button id="backToDrivesButton" class="mini-action back-button" type="button">Back to drives</button>
             <div class="diagnostic-header">
               <div class="disk-identity">
                 <p class="eyebrow">Drive information</p>
@@ -126,14 +104,6 @@
             </div>
 
             <div class="content-grid">
-              <div class="panel inset">
-                <div class="section-head">
-                  <h2>Overview</h2>
-                </div>
-                <div id="overviewGrid" class="info-grid"></div>
-                <ul id="healthNotes" class="notes"></ul>
-              </div>
-
               <div class="panel inset">
                 <div class="section-head">
                   <h2>Test</h2>
@@ -168,7 +138,7 @@
                 </div>
                 <div id="externalSelftestBox" class="job-box muted hidden"></div>
                 <button id="abortSelftestButton" class="safe-remove-button hidden">Abort SMART self-test</button>
-                <details class="tool-menu erase-menu" {{ 'open' if active_page == 'erase' else '' }}>
+                <details class="tool-menu erase-menu" open>
                   <summary>Erase & destruction</summary>
                   <div class="settings-box">
                     <label class="check-row">
@@ -206,6 +176,12 @@
                     <button id="nvmeSanitizeBlockButton" class="erase-button secondary" disabled>NVMe Sanitize Block</button>
                   </div>
                 </details>
+              </div>
+              <div class="panel inset">
+                <div class="section-head">
+                  <h2>Health notes</h2>
+                </div>
+                <ul id="healthNotes" class="notes compact-notes"></ul>
               </div>
             </div>
 

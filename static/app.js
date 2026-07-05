@@ -105,7 +105,12 @@ function byId(id) {
 }
 
 function pageName() {
-  return document.body.dataset.page || "dashboard";
+  return document.body.dataset.page || "drives";
+}
+
+function openDevice(name) {
+  if (!name) return;
+  window.location.href = `/device/${encodeURIComponent(name)}`;
 }
 
 function resolvedTheme(mode) {
@@ -569,11 +574,11 @@ function renderDiskList() {
         <span>Include in batch test</span>
       </label>
     `;
-    button.onclick = () => selectDisk(disk.name);
+    button.onclick = () => openDevice(disk.name);
     button.onkeydown = (event) => {
       if (event.key === "Enter" || event.key === " ") {
         event.preventDefault();
-        selectDisk(disk.name);
+        openDevice(disk.name);
       }
     };
     const checkbox = button.querySelector("input");
@@ -804,6 +809,8 @@ function renderExternalSelftest(selftest) {
 }
 
 function renderOverview(disk, overview, health) {
+  const grid = byId("overviewGrid");
+  if (!grid) return;
   const items = [
     { label: OVERVIEW_LABELS.summary, value: health.summary || "n/a", wide: true },
     { label: OVERVIEW_LABELS.kind, value: disk.kind || "unknown" },
@@ -819,7 +826,7 @@ function renderOverview(disk, overview, health) {
     { label: OVERVIEW_LABELS.mediaErrors, value: overview?.media_errors || "n/a" },
   ];
 
-  byId("overviewGrid").innerHTML = items
+  grid.innerHTML = items
     .map(({ label, value, wide, wrap }) => `
       <div class="info-cell${wide ? " wide" : ""}">
         <span>${label}</span>
@@ -1062,9 +1069,7 @@ function renderActiveJobs() {
         <div class="progress-bar" style="width:${percent}%"></div>
       </div>
     `;
-    if (state.selectedDisk?.name !== job.device) {
-      element.onclick = () => selectDisk(job.device);
-    }
+    element.onclick = () => openDevice(job.device);
     container.appendChild(element);
   });
 
@@ -1137,7 +1142,14 @@ async function refreshDisks() {
   await loadControllers();
   renderDashboard();
 
-  if (pageName() === "dashboard") {
+  if (pageName() === "drives") {
+    state.selectedDisk = null;
+    byId("detailView").classList.add("hidden");
+    byId("emptyState").classList.add("hidden");
+    return;
+  }
+
+  if (pageName() !== "device") {
     state.selectedDisk = null;
     byId("detailView").classList.add("hidden");
     byId("emptyState").classList.add("hidden");
@@ -1145,7 +1157,8 @@ async function refreshDisks() {
   }
 
   const visible = visibleDisks();
-  const stored = localStorage.getItem("selectedDiskName");
+  const requested = document.body.dataset.device || "";
+  const stored = requested || localStorage.getItem("selectedDiskName");
   const stillVisible = visible.some((disk) => disk.name === stored);
   if (stored && stillVisible) {
     await selectDisk(stored);
@@ -1413,6 +1426,9 @@ document.addEventListener("DOMContentLoaded", async () => {
   byId("selectNvmeButton").onclick = () => selectVisibleDisks((disk) => disk.kind === "NVMe");
   byId("selectAllButton").onclick = () => selectVisibleDisks(() => true);
   byId("clearSelectionButton").onclick = () => selectVisibleDisks(() => false);
+  byId("backToDrivesButton").onclick = () => {
+    window.location.href = "/";
+  };
   byId("networkConfigForm").onsubmit = (event) => {
     event.preventDefault();
     saveNetworkConfig({

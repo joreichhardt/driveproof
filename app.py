@@ -17,7 +17,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from flask import Flask, abort, jsonify, render_template, request, send_file
+from flask import Flask, abort, jsonify, redirect, render_template, request, send_file
 from markupsafe import Markup
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives import serialization
@@ -3028,17 +3028,22 @@ def run_test_job(job_id: str) -> None:
 
 @app.route("/")
 def index() -> str:
-    return render_template("index.html", active_page="dashboard")
+    return render_template("index.html", active_page="drives")
 
 
 @app.route("/test")
 def test_page() -> str:
-    return render_template("index.html", active_page="test")
+    return redirect("/")
 
 
 @app.route("/erase")
 def erase_page() -> str:
-    return render_template("index.html", active_page="erase")
+    return redirect("/")
+
+
+@app.route("/device/<device_name>")
+def device_page(device_name: str) -> str:
+    return render_template("index.html", active_page="device", selected_device=device_name)
 
 
 @app.route("/jobs")

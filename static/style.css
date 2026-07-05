@@ -193,7 +193,7 @@ body[data-theme="light"] {
 
 .layout {
   display: grid;
-  grid-template-columns: 360px 1fr;
+  grid-template-columns: 1fr;
   gap: 22px;
   align-items: start;
 }
@@ -213,6 +213,7 @@ body[data-theme="light"] {
 }
 
 .panel-list,
+.drives-section,
 .panel-detail,
 .inset {
   padding: 22px;
@@ -269,6 +270,21 @@ body[data-theme="light"] {
   position: sticky;
   top: 16px;
   align-self: start;
+}
+
+.drives-section .disk-list {
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 14px;
+}
+
+.drives-section .disk-card {
+  min-height: 190px;
+  align-content: start;
+}
+
+.back-button {
+  width: auto;
+  margin-bottom: 16px;
 }
 
 .legal-nav {
@@ -1070,166 +1086,30 @@ body[data-theme="light"] .mini-action {
   background: color-mix(in srgb, var(--accent-soft) 55%, var(--panel));
 }
 
-body[data-page="reports"] .layout,
-body[data-page="jobs"] .layout {
-  grid-template-columns: 1fr;
-}
-
-body[data-page="reports"] .panel-list,
-body[data-page="reports"] #emptyState,
-body[data-page="reports"] #detailView,
-body[data-page="jobs"] .panel-list,
-body[data-page="jobs"] #emptyState,
-body[data-page="jobs"] #detailView {
-  display: none !important;
-}
-
-body[data-page="settings"] .layout {
-  grid-template-columns: 1fr;
-}
-
-body[data-page="dashboard"] .layout {
-  grid-template-columns: 1fr;
-}
-
-body[data-page="dashboard"] .panel-list,
-body[data-page="dashboard"] #emptyState,
-body[data-page="dashboard"] #detailView,
-body[data-page="dashboard"] .reports-section,
-body[data-page="dashboard"] .jobs-section,
-body[data-page="dashboard"] .settings-section {
-  display: none !important;
-}
-
-.dashboard-section {
-  display: none;
-}
-
-body[data-page="dashboard"] .dashboard-section {
-  display: grid;
-  gap: 18px;
-}
-
-body[data-page="dashboard"] .dashboard-section > .content-grid {
-  grid-template-columns: 1fr;
-}
-
-body:not([data-page="dashboard"]) .dashboard-section {
-  display: none !important;
-}
-
-.dashboard-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px;
-}
-
-#dashboardDiskGroups.dashboard-grid {
-  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
-}
-
-#dashboardControllers.dashboard-grid {
-  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
-}
-
-.dashboard-card {
-  min-width: 0;
-  width: 100%;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: color-mix(in srgb, var(--panel-soft) 72%, transparent);
-  padding: 14px;
-  display: grid;
-  gap: 12px;
-}
-
-.dashboard-card-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-}
-
-.dashboard-list {
-  display: grid;
-  gap: 8px;
-}
-
-.dashboard-list-row {
-  min-width: 0;
-  display: grid;
-  grid-template-columns: minmax(150px, 1fr) minmax(120px, auto);
-  gap: 12px;
-  align-items: center;
-  padding: 10px 0;
-  border-top: 1px solid var(--line);
-}
-
-.dashboard-list-row:first-child {
-  border-top: 0;
-  padding-top: 0;
-}
-
-.dashboard-list-row span,
-.dashboard-list-row a {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.dashboard-list-row span:last-child,
-.dashboard-list-row a {
-  color: var(--muted);
-  font-size: 13px;
-  text-align: right;
-}
-
-body[data-page="settings"] .panel-list,
-body[data-page="settings"] #emptyState,
-body[data-page="settings"] #detailView,
-body[data-page="settings"] .reports-section {
-  display: none !important;
-}
-
+.reports-section,
+.jobs-section,
 .settings-section {
   display: none;
 }
 
+body[data-page="drives"] .panel-detail,
+body[data-page="device"] .drives-section,
+body[data-page="reports"] .drives-section,
+body[data-page="reports"] #emptyState,
+body[data-page="reports"] #detailView,
+body[data-page="jobs"] .drives-section,
+body[data-page="jobs"] #emptyState,
+body[data-page="jobs"] #detailView,
+body[data-page="settings"] .drives-section,
+body[data-page="settings"] #emptyState,
+body[data-page="settings"] #detailView {
+  display: none !important;
+}
+
+body[data-page="reports"] .reports-section,
+body[data-page="jobs"] .jobs-section,
 body[data-page="settings"] .settings-section {
   display: grid;
-}
-
-.jobs-section {
-  display: none;
-}
-
-body[data-page="jobs"] .jobs-section {
-  display: grid;
-}
-
-body[data-page="test"] .erase-menu,
-body[data-page="erase"] .diagnostics-menu {
-  display: none;
-}
-
-body[data-page="erase"] .erase-menu {
-  display: block;
-}
-
-body[data-page="test"] .reports-section,
-body[data-page="erase"] .reports-section,
-body[data-page="test"] .jobs-section,
-body[data-page="erase"] .jobs-section,
-body[data-page="reports"] .jobs-section,
-body[data-page="settings"] .jobs-section,
-body[data-page="dashboard"] .settings-section,
-body[data-page="test"] .settings-section,
-body[data-page="erase"] .settings-section,
-body[data-page="reports"] .settings-section,
-body[data-page="jobs"] .settings-section,
-body[data-page="jobs"] .reports-section {
-  display: none;
 }
 
 .legal-doc-panel {
