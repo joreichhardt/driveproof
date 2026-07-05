@@ -403,6 +403,96 @@ h2 {
   margin-bottom: 14px;
 }
 
+.batch-actions-card {
+  display: grid;
+  gap: 12px;
+  margin-bottom: 18px;
+}
+
+.batch-tile {
+  width: 100%;
+  min-height: 112px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: linear-gradient(180deg, var(--panel-strong), var(--panel-soft));
+  color: var(--text);
+  display: grid;
+  grid-template-columns: 88px minmax(0, 1fr);
+  align-items: center;
+  gap: 16px;
+  padding: 16px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.batch-tile strong,
+.batch-tile small {
+  display: block;
+}
+
+.batch-tile strong {
+  font-size: 18px;
+}
+
+.batch-tile small {
+  margin-top: 4px;
+  color: var(--muted);
+  line-height: 1.35;
+}
+
+.drive-stack-graphic {
+  position: relative;
+  width: 78px;
+  height: 64px;
+}
+
+.drive-stack-graphic span {
+  position: absolute;
+  left: 0;
+  width: 72px;
+  height: 38px;
+  border: 1px solid color-mix(in srgb, var(--accent) 34%, var(--line));
+  border-radius: 8px;
+  background:
+    radial-gradient(circle at 18px 19px, var(--accent) 0 5px, transparent 6px),
+    linear-gradient(180deg, color-mix(in srgb, var(--panel-strong) 90%, white), var(--panel-soft));
+  box-shadow: 0 10px 18px rgba(0, 0, 0, 0.12);
+}
+
+.drive-stack-graphic span::after {
+  content: "";
+  position: absolute;
+  right: 10px;
+  bottom: 8px;
+  width: 24px;
+  height: 4px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--muted) 48%, transparent);
+}
+
+.drive-stack-graphic span:nth-child(1) {
+  top: 0;
+  transform: translateX(6px);
+}
+
+.drive-stack-graphic span:nth-child(2) {
+  top: 13px;
+  transform: translateX(3px);
+}
+
+.drive-stack-graphic span:nth-child(3) {
+  top: 26px;
+}
+
+.batch-actions-panel {
+  display: grid;
+  gap: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-soft);
+  padding: 16px;
+}
+
 .batch-button-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));

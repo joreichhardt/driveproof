@@ -61,6 +61,69 @@
               <button id="clearSelectionButton" class="mini-action" type="button">Clear</button>
             </div>
           </div>
+          <div class="batch-actions-card">
+            <button id="toggleBatchActionsButton" class="batch-tile" type="button">
+              <span class="drive-stack-graphic" aria-hidden="true">
+                <span></span>
+                <span></span>
+                <span></span>
+              </span>
+              <span>
+                <strong>Batch actions</strong>
+                <small>Test, erase, or erase + test selected drives.</small>
+              </span>
+            </button>
+            <div id="batchActionsPanel" class="batch-actions-panel hidden">
+              <div class="section-head">
+                <h2>Batch job</h2>
+                <p id="batchSelectionSummary" class="muted">No drives selected.</p>
+              </div>
+              <label class="field-label" for="batchTestMode">Test mode</label>
+              <select id="batchTestMode" class="select-input">
+                <option value="quick">Quick</option>
+                <option value="deep_sample">Deep Sample</option>
+                <option value="smart_short">SMART Short</option>
+                <option value="smart_extended">SMART Extended</option>
+                <option value="full">Full Read</option>
+              </select>
+              <button id="batchRunTestButton" class="run-button" type="button">Run batch test</button>
+              <details class="tool-menu batch-erase-menu">
+                <summary>Erase & combined workflow</summary>
+                <label class="check-row">
+                  <input id="batchEnableDestructive" type="checkbox">
+                  <span>Enable erase functions</span>
+                </label>
+                <label class="check-row">
+                  <input id="batchAllowInternalErase" type="checkbox">
+                  <span>Allow erase on internal drives</span>
+                </label>
+                <div id="batchDangerZone" class="danger-zone hidden">
+                  <label class="field-label" for="batchEraseMethod">Erase method</label>
+                  <select id="batchEraseMethod" class="select-input">
+                    <option value="zero">Single-pass zero erase</option>
+                    <option value="ata_basic">ATA Secure Erase</option>
+                    <option value="ata_enhanced">ATA Enhanced Secure Erase</option>
+                    <option value="nvme_format">NVMe Format Erase</option>
+                    <option value="nvme_sanitize_crypto">NVMe Sanitize Crypto</option>
+                    <option value="nvme_sanitize_block">NVMe Sanitize Block</option>
+                  </select>
+                  <label class="check-row">
+                    <input id="batchPostEraseTestEnabled" type="checkbox">
+                    <span>Run test after erase</span>
+                  </label>
+                  <label class="field-label" for="batchPostEraseTestMode">Post-erase test</label>
+                  <select id="batchPostEraseTestMode" class="select-input">
+                    <option value="quick">Quick</option>
+                    <option value="smart_short">SMART Short</option>
+                    <option value="smart_extended">SMART Extended</option>
+                    <option value="full">Full Read</option>
+                  </select>
+                  <button id="batchRunEraseButton" class="erase-button" type="button">Run batch erase</button>
+                </div>
+              </details>
+              <div id="batchActionStatus" class="job-box muted">Select drives and choose an action.</div>
+            </div>
+          </div>
           <div id="diskList" class="disk-list"></div>
         </section>
 

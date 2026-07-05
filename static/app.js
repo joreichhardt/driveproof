@@ -297,6 +297,26 @@ function updateComplianceHint() {
     : "Resale diagnostic report.";
 }
 
+function setTextIfPresent(id, value) {
+  const element = byId(id);
+  if (element) element.textContent = value;
+}
+
+function setHtmlIfPresent(id, value) {
+  const element = byId(id);
+  if (element) element.innerHTML = value;
+}
+
+function setOperationStatus(value, html = false) {
+  if (html) {
+    setHtmlIfPresent("jobStatus", value);
+    setHtmlIfPresent("batchActionStatus", value);
+  } else {
+    setTextIfPresent("jobStatus", value);
+    setTextIfPresent("batchActionStatus", value);
+  }
+}
+
 function syncSettingsInputs() {
   byId("showInternalDisks").checked = state.settings.showInternalDisks;
   byId("enableDestructive").checked = state.settings.enableDestructive;
@@ -304,6 +324,25 @@ function syncSettingsInputs() {
   byId("postEraseTestEnabled").checked = state.settings.postEraseTestEnabled;
   byId("postEraseTestMode").value = state.settings.postEraseTestMode || "quick";
   byId("postEraseTestMode").disabled = !state.settings.postEraseTestEnabled;
+  setTextIfPresent("batchSelectionSummary", `${selectedBatchDisks().length} selected drive(s).`);
+  const batchTestMode = byId("batchTestMode");
+  if (batchTestMode) batchTestMode.value = state.selectedMode;
+  const batchEnableDestructive = byId("batchEnableDestructive");
+  if (batchEnableDestructive) batchEnableDestructive.checked = state.settings.enableDestructive;
+  const batchAllowInternalErase = byId("batchAllowInternalErase");
+  if (batchAllowInternalErase) {
+    batchAllowInternalErase.checked = state.settings.allowInternalErase;
+    batchAllowInternalErase.disabled = !state.settings.enableDestructive;
+  }
+  const batchPostEraseTestEnabled = byId("batchPostEraseTestEnabled");
+  if (batchPostEraseTestEnabled) batchPostEraseTestEnabled.checked = state.settings.postEraseTestEnabled;
+  const batchPostEraseTestMode = byId("batchPostEraseTestMode");
+  if (batchPostEraseTestMode) {
+    batchPostEraseTestMode.value = state.settings.postEraseTestMode || "quick";
+    batchPostEraseTestMode.disabled = !state.settings.postEraseTestEnabled;
+  }
+  const batchDangerZone = byId("batchDangerZone");
+  if (batchDangerZone) batchDangerZone.classList.toggle("hidden", !state.settings.enableDestructive);
 }
 
 function postErasePayload() {
@@ -354,17 +393,35 @@ function hasAppJob(device) {
 
 function updateRunButtonLabel() {
   const targets = testTargetDisks();
+  const runnableTargets = targets.filter((disk) => !hasAppJob(disk.name));
   const count = targets.length;
+  const runnableCount = runnableTargets.length;
+  const batchInternalEraseBlocked = targets.some((disk) => disk.internal) && !state.settings.allowInternalErase;
   byId("runTestButton").textContent = count > 1 ? `Run test on ${count} drives` : "Run test";
   byId("eraseButton").textContent = count > 1 ? `Zero erase ${count} drives` : "Single-pass zero erase";
+  setTextIfPresent("batchSelectionSummary", count ? `${count} selected drive${count === 1 ? "" : "s"}.` : "No drives selected.");
+  setTextIfPresent("batchRunTestButton", count > 1 ? `Run test on ${count} drives` : "Run batch test");
+  setTextIfPresent("batchRunEraseButton", count > 1 ? `Run erase on ${count} drives` : "Run batch erase");
+  const batchRunTestButton = byId("batchRunTestButton");
+  if (batchRunTestButton) batchRunTestButton.disabled = runnableCount === 0;
+  const batchRunEraseButton = byId("batchRunEraseButton");
+  if (batchRunEraseButton) {
+    batchRunEraseButton.disabled = runnableCount === 0 || !state.settings.enableDestructive || batchInternalEraseBlocked;
+  }
 }
 
 function updateSafetyUi() {
   byId("dangerZone").classList.toggle("hidden", !state.settings.enableDestructive);
   byId("allowInternalErase").disabled = !state.settings.enableDestructive;
+  const batchDangerZone = byId("batchDangerZone");
+  if (batchDangerZone) batchDangerZone.classList.toggle("hidden", !state.settings.enableDestructive);
+  const batchAllowInternalErase = byId("batchAllowInternalErase");
+  if (batchAllowInternalErase) batchAllowInternalErase.disabled = !state.settings.enableDestructive;
+  updateRunButtonLabel();
 }
 
 function setJobProgress(percent, label = "Status") {
+  if (!byId("jobStatusLabel") || !byId("jobPercent") || !byId("jobProgressBar")) return;
   const safePercent = Math.max(0, Math.min(100, Math.round(percent || 0)));
   byId("jobStatusLabel").textContent = label;
   byId("jobPercent").textContent = `${safePercent}%`;
@@ -538,7 +595,7 @@ function renderDiskList() {
       </div>
       <label class="disk-select">
         <input type="checkbox" ${checked ? "checked" : ""}>
-        <span>Include in batch test</span>
+        <span>Include in batch job</span>
       </label>
     `;
     button.onclick = () => openDevice(disk.name);
@@ -1142,7 +1199,10 @@ async function refreshDisks() {
 
 async function startTest() {
   const targets = testTargetDisks().filter((disk) => !hasAppJob(disk.name));
-  if (!targets.length) return;
+  if (!targets.length) {
+    setOperationStatus("No selectable drives without an active app job.");
+    return;
+  }
 
   const started = [];
   const failed = [];
@@ -1169,7 +1229,7 @@ async function startTest() {
     const parts = [];
     if (started.length) parts.push(`started ${started.length} test${started.length === 1 ? "" : "s"}`);
     if (failed.length) parts.push(`failed: ${failed.join("; ")}`);
-    byId("jobStatus").textContent = parts.join(" · ");
+    setOperationStatus(parts.join(" · "));
   }
 }
 
@@ -1188,7 +1248,7 @@ async function pollSelectedJob() {
     const postLink = payload.result.post_test?.report_id
       ? ` · <a href="/report/${payload.result.post_test.report_id}">Open post-test report</a>`
       : "";
-    byId("jobStatus").innerHTML = `done · ${reportExportStatus(payload.result.export)} · <a href="/report/${payload.result.report_id}">Open report</a>${postLink}`;
+    setOperationStatus(`done · ${reportExportStatus(payload.result.export)} · <a href="/report/${payload.result.report_id}">Open report</a>${postLink}`, true);
     setJobProgress(100, MODE_LABELS[payload.mode] || "Test");
     state.currentJobId = null;
     state.pollTimer = null;
@@ -1199,7 +1259,7 @@ async function pollSelectedJob() {
   }
 
   if (payload.status === "error") {
-    byId("jobStatus").textContent = `error · ${payload.error}`;
+    setOperationStatus(`error · ${payload.error}`);
     state.currentJobId = null;
     state.pollTimer = null;
     await refreshActiveJobs();
@@ -1207,7 +1267,7 @@ async function pollSelectedJob() {
     return;
   }
 
-  byId("jobStatus").textContent = `${payload.status} · ${payload.current_step} · ${percent}%`;
+  setOperationStatus(`${payload.status} · ${payload.current_step} · ${percent}%`);
   setControlsBusy();
   state.pollTimer = setTimeout(pollSelectedJob, 1500);
 }
@@ -1251,7 +1311,10 @@ async function abortExternalSelftest() {
 
 async function eraseSelectedDisk() {
   const targets = testTargetDisks().filter((disk) => !hasAppJob(disk.name));
-  if (!targets.length) return;
+  if (!targets.length) {
+    setOperationStatus("No selectable drives without an active app job.");
+    return;
+  }
   const started = [];
   const failed = [];
   for (const disk of targets) {
@@ -1270,12 +1333,15 @@ async function eraseSelectedDisk() {
   if (selectedStarted) state.currentJobId = selectedStarted.jobId;
   await refreshActiveJobs();
   if (state.currentJobId) pollSelectedJob();
-  byId("jobStatus").textContent = [`started ${started.length} erase job${started.length === 1 ? "" : "s"}`, failed.length ? `failed: ${failed.join("; ")}` : ""].filter(Boolean).join(" · ");
+  setOperationStatus([`started ${started.length} erase job${started.length === 1 ? "" : "s"}`, failed.length ? `failed: ${failed.join("; ")}` : ""].filter(Boolean).join(" · "));
 }
 
 async function secureEraseSelectedDisk(method = "basic") {
   const targets = testTargetDisks().filter((disk) => !hasAppJob(disk.name));
-  if (!targets.length) return;
+  if (!targets.length) {
+    setOperationStatus("No selectable drives without an active app job.");
+    return;
+  }
   const started = [];
   const failed = [];
   for (const disk of targets) {
@@ -1294,12 +1360,15 @@ async function secureEraseSelectedDisk(method = "basic") {
   if (selectedStarted) state.currentJobId = selectedStarted.jobId;
   await refreshActiveJobs();
   if (state.currentJobId) pollSelectedJob();
-  byId("jobStatus").textContent = [`started ${started.length} secure erase job${started.length === 1 ? "" : "s"}`, failed.length ? `failed: ${failed.join("; ")}` : ""].filter(Boolean).join(" · ");
+  setOperationStatus([`started ${started.length} secure erase job${started.length === 1 ? "" : "s"}`, failed.length ? `failed: ${failed.join("; ")}` : ""].filter(Boolean).join(" · "));
 }
 
 async function nvmeEraseSelectedDisk(method = "format") {
   const targets = testTargetDisks().filter((disk) => !hasAppJob(disk.name));
-  if (!targets.length) return;
+  if (!targets.length) {
+    setOperationStatus("No selectable drives without an active app job.");
+    return;
+  }
   const started = [];
   const failed = [];
   for (const disk of targets) {
@@ -1318,7 +1387,18 @@ async function nvmeEraseSelectedDisk(method = "format") {
   if (selectedStarted) state.currentJobId = selectedStarted.jobId;
   await refreshActiveJobs();
   if (state.currentJobId) pollSelectedJob();
-  byId("jobStatus").textContent = [`started ${started.length} NVMe erase job${started.length === 1 ? "" : "s"}`, failed.length ? `failed: ${failed.join("; ")}` : ""].filter(Boolean).join(" · ");
+  setOperationStatus([`started ${started.length} NVMe erase job${started.length === 1 ? "" : "s"}`, failed.length ? `failed: ${failed.join("; ")}` : ""].filter(Boolean).join(" · "));
+}
+
+async function runBatchErase() {
+  const method = byId("batchEraseMethod")?.value || "zero";
+  if (method === "zero") return eraseSelectedDisk();
+  if (method === "ata_basic") return secureEraseSelectedDisk("basic");
+  if (method === "ata_enhanced") return secureEraseSelectedDisk("enhanced");
+  if (method === "nvme_format") return nvmeEraseSelectedDisk("format");
+  if (method === "nvme_sanitize_crypto") return nvmeEraseSelectedDisk("sanitize_crypto");
+  if (method === "nvme_sanitize_block") return nvmeEraseSelectedDisk("sanitize_block");
+  setOperationStatus(`Unsupported batch erase method: ${method}`);
 }
 
 function bindSettings() {
@@ -1393,6 +1473,45 @@ document.addEventListener("DOMContentLoaded", async () => {
   byId("selectNvmeButton").onclick = () => selectVisibleDisks((disk) => disk.kind === "NVMe");
   byId("selectAllButton").onclick = () => selectVisibleDisks(() => true);
   byId("clearSelectionButton").onclick = () => selectVisibleDisks(() => false);
+  byId("toggleBatchActionsButton").onclick = () => {
+    byId("batchActionsPanel").classList.toggle("hidden");
+  };
+  byId("batchTestMode").onchange = (event) => {
+    state.selectedMode = event.target.value;
+  };
+  byId("batchRunTestButton").onclick = () => startTest().catch((error) => {
+    setOperationStatus(`batch test error · ${error.message}`);
+    setControlsBusy();
+  });
+  byId("batchEnableDestructive").onchange = (event) => {
+    state.settings.enableDestructive = event.target.checked;
+    if (!state.settings.enableDestructive) {
+      state.settings.allowInternalErase = false;
+    }
+    persistSettings();
+    syncSettingsInputs();
+    updateSafetyUi();
+  };
+  byId("batchAllowInternalErase").onchange = (event) => {
+    state.settings.allowInternalErase = event.target.checked;
+    persistSettings();
+    syncSettingsInputs();
+    updateSafetyUi();
+  };
+  byId("batchPostEraseTestEnabled").onchange = (event) => {
+    state.settings.postEraseTestEnabled = event.target.checked;
+    persistSettings();
+    syncSettingsInputs();
+  };
+  byId("batchPostEraseTestMode").onchange = (event) => {
+    state.settings.postEraseTestMode = event.target.value;
+    persistSettings();
+    syncSettingsInputs();
+  };
+  byId("batchRunEraseButton").onclick = () => runBatchErase().catch((error) => {
+    setOperationStatus(`batch erase error · ${error.message}`);
+    setControlsBusy();
+  });
   byId("backToDrivesButton").onclick = () => {
     window.location.href = "/";
   };
@@ -1410,33 +1529,33 @@ document.addEventListener("DOMContentLoaded", async () => {
     byId("networkConfigStatus").textContent = `clear error · ${error.message}`;
   });
   byId("runTestButton").onclick = () => startTest().catch((error) => {
-    byId("jobStatus").textContent = `start error · ${error.message}`;
+    setOperationStatus(`start error · ${error.message}`);
     setControlsBusy();
   });
   byId("safeRemoveButton").onclick = () => safeRemoveSelectedDisk();
   byId("abortSelftestButton").onclick = () => abortExternalSelftest();
   byId("eraseButton").onclick = () => eraseSelectedDisk().catch((error) => {
-    byId("jobStatus").textContent = `erase error · ${error.message}`;
+    setOperationStatus(`erase error · ${error.message}`);
     setControlsBusy();
   });
   byId("secureEraseButton").onclick = () => secureEraseSelectedDisk().catch((error) => {
-    byId("jobStatus").textContent = `secure erase error · ${error.message}`;
+    setOperationStatus(`secure erase error · ${error.message}`);
     setControlsBusy();
   });
   byId("enhancedSecureEraseButton").onclick = () => secureEraseSelectedDisk("enhanced").catch((error) => {
-    byId("jobStatus").textContent = `enhanced secure erase error · ${error.message}`;
+    setOperationStatus(`enhanced secure erase error · ${error.message}`);
     setControlsBusy();
   });
   byId("nvmeEraseButton").onclick = () => nvmeEraseSelectedDisk().catch((error) => {
-    byId("jobStatus").textContent = `NVMe erase error · ${error.message}`;
+    setOperationStatus(`NVMe erase error · ${error.message}`);
     setControlsBusy();
   });
   byId("nvmeSanitizeCryptoButton").onclick = () => nvmeEraseSelectedDisk("sanitize_crypto").catch((error) => {
-    byId("jobStatus").textContent = `NVMe sanitize crypto error · ${error.message}`;
+    setOperationStatus(`NVMe sanitize crypto error · ${error.message}`);
     setControlsBusy();
   });
   byId("nvmeSanitizeBlockButton").onclick = () => nvmeEraseSelectedDisk("sanitize_block").catch((error) => {
-    byId("jobStatus").textContent = `NVMe sanitize block error · ${error.message}`;
+    setOperationStatus(`NVMe sanitize block error · ${error.message}`);
     setControlsBusy();
   });
   bindSettings();
