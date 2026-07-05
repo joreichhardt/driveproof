@@ -46,6 +46,26 @@ let
         echo "DriveProof did not start. Check: systemctl status driveproof" > "$status_file"
         exec xterm -geometry 140x42 -fa Monospace -fs 18 -e "cat '$status_file'; echo; journalctl -u driveproof -n 80 --no-pager; echo; read -p 'Press Enter to open a shell...'; exec bash"
       fi
+      profile_dir=/tmp/driveproof-chromium
+      download_dir=/run/media/driveproof/DRVTOOLS/DriveProof-Vendor-Tools/Downloads
+      mkdir -p "$profile_dir/Default"
+      cat > "$profile_dir/Default/Preferences" <<EOF
+      {
+        "download": {
+          "default_directory": "$download_dir",
+          "directory_upgrade": true,
+          "prompt_for_download": false
+        },
+        "profile": {
+          "default_content_setting_values": {
+            "automatic_downloads": 1
+          }
+        },
+        "safebrowsing": {
+          "enabled": true
+        }
+      }
+EOF
       exec chromium \
         --kiosk \
         --no-first-run \
@@ -55,9 +75,46 @@ let
         --disable-features=Translate,MediaRouter \
         --disable-session-crashed-bubble \
         --disable-infobars \
-        --incognito \
-        --user-data-dir=/tmp/driveproof-chromium \
+        --disable-popup-blocking \
+        --download-default-directory="$download_dir" \
+        --user-data-dir="$profile_dir" \
         http://127.0.0.1:5055/
+    '';
+  };
+
+  driveproofMountExports = pkgs.writeShellApplication {
+    name = "driveproof-mount-exports";
+    runtimeInputs = [
+      pkgs.coreutils
+      pkgs.e2fsprogs
+      pkgs.util-linux
+    ];
+    text = ''
+      set -euo pipefail
+
+      mount_root=/run/media/driveproof
+      mkdir -p "$mount_root"
+
+      mount_label() {
+        label="$1"
+        options="$2"
+        device="$(blkid -L "$label" 2>/dev/null || true)"
+        mount_point="$mount_root/$label"
+        mkdir -p "$mount_point"
+        if [ -n "$device" ] && ! mountpoint -q "$mount_point"; then
+          mount -o "$options" "$device" "$mount_point" || true
+        fi
+      }
+
+      mount_label DRVPROOF rw,umask=000
+      mount_label DRVTOOLS rw
+
+      tools_dir="$mount_root/DRVTOOLS/DriveProof-Vendor-Tools"
+      downloads_dir="$tools_dir/Downloads"
+      if mountpoint -q "$mount_root/DRVTOOLS"; then
+        mkdir -p "$downloads_dir"
+        chmod 0777 "$tools_dir" "$downloads_dir" || true
+      fi
     '';
   };
 
@@ -206,7 +263,8 @@ in {
   systemd.services.driveproof = {
     description = "DriveProof";
     wantedBy = [ "multi-user.target" ];
-    after = [ "network.target" ];
+    after = [ "network.target" "driveproof-mount-exports.service" ];
+    requires = [ "driveproof-mount-exports.service" ];
     path = with pkgs; [
       coreutils
       dpkg
@@ -238,7 +296,8 @@ in {
   systemd.services.driveproof-network-config = {
     description = "Apply DriveProof static network config from DRVPROOF";
     wantedBy = [ "multi-user.target" ];
-    after = [ "NetworkManager.service" ];
+    after = [ "NetworkManager.service" "driveproof-mount-exports.service" ];
+    requires = [ "driveproof-mount-exports.service" ];
     before = [ "driveproof.service" ];
     path = with pkgs; [
       coreutils
@@ -251,6 +310,22 @@ in {
     serviceConfig = {
       Type = "oneshot";
       ExecStart = "${driveproofNetworkConfig}/bin/driveproof-apply-network-config";
+    };
+  };
+
+  systemd.services.driveproof-mount-exports = {
+    description = "Mount DriveProof USB export and tools partitions";
+    wantedBy = [ "multi-user.target" ];
+    before = [ "driveproof.service" "display-manager.service" ];
+    path = with pkgs; [
+      coreutils
+      e2fsprogs
+      util-linux
+    ];
+    serviceConfig = {
+      Type = "oneshot";
+      RemainAfterExit = true;
+      ExecStart = "${driveproofMountExports}/bin/driveproof-mount-exports";
     };
   };
 

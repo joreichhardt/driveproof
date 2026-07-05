@@ -54,6 +54,7 @@ LEGAL_DOCS = {
 REPORT_DIR.mkdir(parents=True, exist_ok=True)
 EXPORT_MOUNT_ROOT = Path("/run/media/driveproof")
 VENDOR_TOOL_DIR_NAME = "DriveProof-Vendor-Tools"
+VENDOR_TOOL_DOWNLOAD_DIR_NAME = "Downloads"
 NETWORK_CONFIG_FILENAME = "driveproof-network.conf"
 VENDOR_TOOL_NAMES = ("storcli", "storcli64", "perccli", "perccli64", "arcconf", "ssacli", "hpssacli", "areca-cli", "cli64")
 VENDOR_TOOL_CATALOG = {
@@ -751,8 +752,20 @@ def vendor_tool_roots() -> list[Path]:
     roots = []
     for target in list_export_targets():
         if target.get("linux_permissions"):
-            roots.append(Path(target["mountpoint"]) / VENDOR_TOOL_DIR_NAME)
+            root = Path(target["mountpoint"]) / VENDOR_TOOL_DIR_NAME
+            roots.append(root)
     return roots
+
+
+def ensure_vendor_tool_root_permissions(root: Path) -> None:
+    root.mkdir(parents=True, exist_ok=True)
+    downloads = root / VENDOR_TOOL_DOWNLOAD_DIR_NAME
+    downloads.mkdir(parents=True, exist_ok=True)
+    for path in (root, downloads):
+        try:
+            path.chmod(0o777)
+        except OSError:
+            pass
 
 
 def default_vendor_tool_root() -> Path:
@@ -761,7 +774,9 @@ def default_vendor_tool_root() -> Path:
         raise FileNotFoundError("No writable export partition found for vendor tools.")
     for target in targets:
         if target.get("linux_permissions"):
-            return Path(target["mountpoint"]) / VENDOR_TOOL_DIR_NAME
+            root = Path(target["mountpoint"]) / VENDOR_TOOL_DIR_NAME
+            ensure_vendor_tool_root_permissions(root)
+            return root
     raise FileNotFoundError("No writable Linux filesystem found for vendor tools. Add or mount an ext4, XFS, or btrfs partition.")
 
 
@@ -775,7 +790,8 @@ def vendor_tool_path(name: str) -> str | None:
 
 def list_vendor_tools() -> dict[str, Any]:
     tools = []
-    for root in vendor_tool_roots():
+    roots = vendor_tool_roots()
+    for root in roots:
         if not root.exists():
             continue
         for path in sorted(root.iterdir()):
@@ -810,8 +826,10 @@ def list_vendor_tools() -> dict[str, Any]:
         )
     return {
         "directory_name": VENDOR_TOOL_DIR_NAME,
+        "download_directory_name": VENDOR_TOOL_DOWNLOAD_DIR_NAME,
         "known_tool_names": list(VENDOR_TOOL_NAMES),
-        "roots": [str(root) for root in vendor_tool_roots()],
+        "roots": [str(root) for root in roots],
+        "download_directories": [str(root / VENDOR_TOOL_DOWNLOAD_DIR_NAME) for root in roots if root.exists()],
         "catalog": catalog,
         "tools": tools,
     }
@@ -3457,8 +3475,9 @@ def api_vendor_tool_download_info(tool_id: str):
                 "tool": {"id": tool_id, **item},
                 "download_url": item["download_url"],
                 "target_directory": str(root),
+                "download_directory": str(root / VENDOR_TOOL_DOWNLOAD_DIR_NAME),
                 "expected_names": item["tool_names"],
-                "message": "Download from the vendor site, accept the vendor terms there, and place or extract the binary into the target directory.",
+                "message": "The vendor site opens in the kiosk browser. Downloads are saved automatically to the DriveProof vendor tools download folder.",
             }
         )
     except Exception as exc:

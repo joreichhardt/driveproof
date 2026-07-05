@@ -222,6 +222,13 @@ async function loadVendorTools() {
   if (!container) return;
   const payload = await fetchJson("/api/vendor-tools");
   container.innerHTML = "";
+  const downloadDirs = payload.download_directories || [];
+  const intro = document.createElement("div");
+  intro.className = "job-box muted";
+  intro.innerHTML = downloadDirs.length
+    ? `Vendor downloads are saved automatically to <strong>${escapeHtml(downloadDirs[0])}</strong>. Close the vendor site with <strong>Ctrl+W</strong> to return to DriveProof.`
+    : "No writable DRVTOOLS/Linux tools partition is available yet. Vendor downloads need the DRVTOOLS partition.";
+  container.appendChild(intro);
   for (const item of payload.catalog || []) {
     const row = document.createElement("div");
     row.className = `system-tool-row ${item.installed ? "ok" : "missing"}`;
@@ -244,7 +251,7 @@ async function loadVendorTools() {
 }
 
 async function prepareVendorToolDownload(toolId) {
-  const accepted = window.confirm("Open vendor download information? Continue only if you are allowed to download and use this vendor tool under its license terms.");
+  const accepted = window.confirm("Open the vendor download site? Continue only if you are allowed to download and use this vendor tool under its license terms. In the live system, downloads are saved automatically to DRVTOOLS. Close the vendor site with Ctrl+W to return to DriveProof.");
   if (!accepted) return;
   const payload = await fetchJson(`/api/vendor-tools/${toolId}/download-info`, {
     method: "POST",
@@ -254,7 +261,7 @@ async function prepareVendorToolDownload(toolId) {
   window.open(payload.download_url, "_blank", "noopener");
   byId("vendorToolsList").insertAdjacentHTML(
     "afterbegin",
-    `<div class="empty-inline muted">Place extracted binary as ${payload.expected_names.join(" or ")} in ${payload.target_directory}</div>`
+    `<div class="empty-inline muted">Download target: ${escapeHtml(payload.download_directory)}. Extract the vendor archive and place the binary as ${payload.expected_names.map(escapeHtml).join(" or ")} in ${escapeHtml(payload.target_directory)}. Close the vendor site with Ctrl+W to return.</div>`
   );
 }
 

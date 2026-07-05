@@ -391,6 +391,25 @@ writable. Finished test reports are saved to `DRVPROOF` without requiring a manu
 export step. The web UI shows whether the report was saved or whether export
 failed.
 
+The live system also mounts `DRVTOOLS` automatically at:
+
+```text
+/run/media/driveproof/DRVTOOLS
+```
+
+DriveProof creates a writable vendor-tool area on that partition:
+
+```text
+/run/media/driveproof/DRVTOOLS/DriveProof-Vendor-Tools
+/run/media/driveproof/DRVTOOLS/DriveProof-Vendor-Tools/Downloads
+```
+
+The kiosk Chromium profile uses the `Downloads` folder as its default download
+directory and disables the download prompt. When an operator opens a vendor
+download site from `/settings`, the vendor page opens in a browser tab/window
+and downloads should go directly to `DRVTOOLS`; no file browser selection should
+be required. Close the vendor page with `Ctrl+W` to return to DriveProof.
+
 If no DHCP server is available, open `/settings` and save a static network
 configuration. DriveProof writes this file to the FAT32 report partition:
 
@@ -408,17 +427,22 @@ Vendor RAID/HBA tools are not redistributed with the public image. If a site is
 licensed to use tools such as `storcli`, `perccli`, `arcconf`, `ssacli`,
 `hpssacli`, or Areca CLI tools, DriveProof can show vendor download links and
 the target directory after the operator confirms that they accept the vendor
-terms. The tool binaries should be placed under:
+terms. The downloaded vendor archive/package is saved under:
+
+```text
+DriveProof-Vendor-Tools/Downloads/
+```
+
+After extraction, the final CLI binary should be placed directly under:
 
 ```text
 DriveProof-Vendor-Tools/
 ```
 
-on a writable Linux filesystem. A Linux filesystem such as ext4, XFS, or btrfs
-is recommended because it preserves Unix permissions. The default `DRVPROOF`
-partition remains FAT32 for report exchange with Windows, macOS, printer kiosks,
-and other simple readers. The generated live USB image includes `DRVTOOLS` as
-the Linux tools partition.
+A Linux filesystem such as ext4, XFS, or btrfs is used because it preserves Unix
+permissions. The default `DRVPROOF` partition remains FAT32 for report exchange
+with Windows, macOS, printer kiosks, and other simple readers. The generated
+live USB image includes `DRVTOOLS` as the Linux tools partition.
 
 Vendor downloads are often archives or distro packages rather than a single
 binary. The live image includes common extraction helpers for ZIP, TAR, RPM, and
