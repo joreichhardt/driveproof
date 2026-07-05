@@ -219,47 +219,10 @@ body[data-theme="light"] {
   padding: 22px;
 }
 
-.service-card {
-  margin: 16px 0 18px;
-  padding: 16px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: var(--panel-soft);
-}
-
-.service-card[data-state="connected"] {
-  border-color: rgba(52, 211, 153, 0.42);
-}
-
-.service-card[data-state="available"] {
-  border-color: rgba(251, 191, 36, 0.46);
-}
-
-.service-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  margin-bottom: 10px;
-}
-
-.service-head h3 {
-  margin: 0;
-  font-size: 16px;
-}
-
 .muted-badge {
   color: var(--muted);
   background: rgba(127, 127, 127, 0.1);
   border-color: var(--line);
-}
-
-.network-summary {
-  display: grid;
-  gap: 8px;
-  margin-top: 14px;
-  padding-top: 14px;
-  border-top: 1px solid var(--line);
 }
 
 .network-mode {

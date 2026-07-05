@@ -476,42 +476,14 @@ async function refreshServiceStatus(force = false) {
 
 function renderServiceStatus() {
   const status = state.serviceStatus;
-  const card = byId("serviceCard");
-  if (!card || !status) return;
-  const title = card.querySelector("h3");
-  const badge = byId("serviceBadge");
-  const reason = byId("serviceReason");
-  const networkMode = byId("networkMode");
-  const networkAddresses = byId("networkAddresses");
-  const networkConfigButton = byId("networkConfigButton");
+  if (!status) return;
   const topbarNetworkStatus = byId("topbarNetworkStatus");
   const topbarNetworkMode = byId("topbarNetworkMode");
   const topbarNetworkAddress = byId("topbarNetworkAddress");
-  const stateLabel = {
-    disabled: "Local mode",
-    available: "Service available",
-    connected: "Connected",
-  }[status.state] || "Local mode";
-  const badgeLabel = {
-    disabled: "Local",
-    available: "Available",
-    connected: "Connected",
-  }[status.state] || "Local";
-
-  card.dataset.state = status.state || "disabled";
-  title.textContent = stateLabel;
-  badge.textContent = badgeLabel;
-  badge.classList.toggle("muted-badge", status.state === "disabled");
-  reason.textContent = status.reason || "No optional network service configured.";
 
   const network = status.network || {};
-  const modeLabel = `${String(network.mode || "dhcp").toUpperCase()} default`;
-  networkMode.textContent = modeLabel;
   const addresses = network.addresses || [];
   const primaryAddress = network.primary_address || addresses[0] || null;
-  networkAddresses.textContent = addresses.length
-    ? addresses.map((addr) => `${addr.interface}: ${addr.address}/${addr.prefixlen}`).join(" · ")
-    : "No IPv4 address detected yet.";
   if (topbarNetworkStatus && topbarNetworkMode && topbarNetworkAddress) {
     topbarNetworkMode.textContent = String(network.mode || "dhcp").toUpperCase();
     topbarNetworkAddress.textContent = primaryAddress
@@ -525,11 +497,6 @@ function renderServiceStatus() {
       window.location.href = "/settings";
     };
   }
-
-  networkConfigButton.classList.remove("hidden");
-  networkConfigButton.onclick = () => {
-    window.location.href = "/settings";
-  };
 }
 
 function visibleDisks() {
