@@ -175,6 +175,33 @@ async function loadSystemTools() {
   }
 }
 
+async function loadNetworkConfig() {
+  const status = byId("networkConfigStatus");
+  if (!status) return;
+  const payload = await fetchJson("/api/network-config");
+  const config = payload.config || {};
+  byId("networkIp").value = config.ip || "";
+  byId("networkGw").value = config.gw || "";
+  byId("networkDns").value = config.dns || "";
+  status.textContent = payload.exists
+    ? `saved to ${payload.path}`
+    : payload.available
+      ? "DHCP default. No static config saved."
+      : `network config unavailable · ${payload.error}`;
+}
+
+async function saveNetworkConfig(config) {
+  const payload = await fetchJson("/api/network-config", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(config),
+  });
+  byId("networkConfigStatus").textContent = payload.deleted
+    ? "Static config removed. DHCP will be used on next boot."
+    : `saved to ${payload.path}`;
+  await loadNetworkConfig();
+}
+
 async function loadVendorTools() {
   const container = byId("vendorToolsList");
   if (!container) return;
@@ -422,10 +449,9 @@ function renderEnterpriseStatus() {
     ? addresses.map((addr) => `${addr.interface}: ${addr.address}/${addr.prefixlen}`).join(" · ")
     : "No IPv4 address detected yet.";
 
-  const canConfigure = Boolean(status.features?.network_configuration);
-  networkConfigButton.classList.toggle("hidden", !canConfigure);
+  networkConfigButton.classList.remove("hidden");
   networkConfigButton.onclick = () => {
-    alert("Network configuration is managed by a licensed DriveProof Enterprise Server. DHCP remains the default for standalone live boot.");
+    window.location.href = "/settings";
   };
 }
 
@@ -1134,6 +1160,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   byId("themeLight").onclick = () => applyTheme("light");
   byId("refreshButton").onclick = async () => {
     await refreshEnterpriseStatus(true);
+    await loadNetworkConfig();
     await loadSystemTools();
     await loadVendorTools();
     await refreshDisks();
@@ -1144,6 +1171,19 @@ document.addEventListener("DOMContentLoaded", async () => {
   byId("selectNvmeButton").onclick = () => selectVisibleDisks((disk) => disk.kind === "NVMe");
   byId("selectAllButton").onclick = () => selectVisibleDisks(() => true);
   byId("clearSelectionButton").onclick = () => selectVisibleDisks(() => false);
+  byId("networkConfigForm").onsubmit = (event) => {
+    event.preventDefault();
+    saveNetworkConfig({
+      ip: byId("networkIp").value,
+      gw: byId("networkGw").value,
+      dns: byId("networkDns").value,
+    }).catch((error) => {
+      byId("networkConfigStatus").textContent = `save error · ${error.message}`;
+    });
+  };
+  byId("clearNetworkConfigButton").onclick = () => saveNetworkConfig({ ip: "", gw: "", dns: "" }).catch((error) => {
+    byId("networkConfigStatus").textContent = `clear error · ${error.message}`;
+  });
   byId("runTestButton").onclick = () => startTest().catch((error) => {
     byId("jobStatus").textContent = `start error · ${error.message}`;
     setControlsBusy();
@@ -1176,6 +1216,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   });
   bindSettings();
   await loadComplianceProfiles();
+  await loadNetworkConfig();
   await loadSystemTools();
   await loadVendorTools();
   await refreshEnterpriseStatus();

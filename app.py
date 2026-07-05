@@ -54,6 +54,7 @@ LEGAL_DOCS = {
 REPORT_DIR.mkdir(parents=True, exist_ok=True)
 EXPORT_MOUNT_ROOT = Path("/run/media/driveproof")
 VENDOR_TOOL_DIR_NAME = "DriveProof-Vendor-Tools"
+NETWORK_CONFIG_FILENAME = "driveproof-network.conf"
 VENDOR_TOOL_NAMES = ("storcli", "storcli64", "perccli", "perccli64", "arcconf", "ssacli", "hpssacli", "areca-cli", "cli64")
 VENDOR_TOOL_CATALOG = {
     "storcli": {
@@ -687,6 +688,62 @@ def default_export_target() -> dict[str, Any]:
         if target["removable"]:
             return target
     return targets[0]
+
+
+def network_config_path() -> Path:
+    return Path(default_export_target()["mountpoint"]) / NETWORK_CONFIG_FILENAME
+
+
+def parse_network_config_text(text: str) -> dict[str, str]:
+    config = {"ip": "", "gw": "", "dns": ""}
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        key = key.strip().lower()
+        if key in config:
+            config[key] = value.strip()
+    return config
+
+
+def read_network_config() -> dict[str, Any]:
+    try:
+        path = network_config_path()
+    except Exception as exc:
+        return {"available": False, "error": str(exc), "config": {"ip": "", "gw": "", "dns": ""}}
+    if not path.exists():
+        return {"available": True, "path": str(path), "exists": False, "config": {"ip": "", "gw": "", "dns": ""}}
+    return {"available": True, "path": str(path), "exists": True, "config": parse_network_config_text(path.read_text(encoding="utf-8"))}
+
+
+def validate_network_config(payload: dict[str, Any]) -> dict[str, str]:
+    ip = (payload.get("ip") or "").strip()
+    gw = (payload.get("gw") or "").strip()
+    dns = (payload.get("dns") or "").strip()
+    if bool(ip) != bool(gw):
+        raise ValueError("ip and gw must be set together, or both left empty for DHCP.")
+    if ip and "/" not in ip:
+        raise ValueError("ip must include CIDR prefix, for example 192.168.1.50/24.")
+    return {"ip": ip, "gw": gw, "dns": dns}
+
+
+def write_network_config(payload: dict[str, Any]) -> dict[str, Any]:
+    config = validate_network_config(payload)
+    path = network_config_path()
+    if not config["ip"] and not config["gw"] and not config["dns"]:
+        path.unlink(missing_ok=True)
+        return {"saved": True, "deleted": True, "path": str(path), "config": config}
+    lines = [
+        "# DriveProof static network config",
+        "# Leave this file absent or empty to use DHCP.",
+        f"ip={config['ip']}",
+        f"gw={config['gw']}",
+        f"dns={config['dns']}",
+        "",
+    ]
+    path.write_text("\n".join(lines), encoding="utf-8")
+    return {"saved": True, "deleted": False, "path": str(path), "config": config}
 
 
 def vendor_tool_roots() -> list[Path]:
@@ -3288,6 +3345,20 @@ def api_compliance_profiles():
 @app.get("/api/system-tools")
 def api_system_tools():
     return jsonify(system_tool_inventory())
+
+
+@app.get("/api/network-config")
+def api_get_network_config():
+    return jsonify(read_network_config())
+
+
+@app.post("/api/network-config")
+def api_save_network_config():
+    payload = request.get_json(silent=True) or {}
+    try:
+        return jsonify(write_network_config(payload))
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 400
 
 
 @app.get("/api/vendor-tools")

@@ -373,11 +373,13 @@ The `usbImage` build also includes writable data partitions:
 - copying results to a work PC
 - direct access from Windows, macOS, and Linux
 - compatibility with simple printer kiosks and other FAT readers
+- optional static network configuration
 
 Current report partition details:
 - filesystem label: `DRVPROOF`
 - size: `512 MiB`
 - report folder: `DriveProof-Reports`
+- network config file: `driveproof-network.conf`
 
 `DRVTOOLS` is an ext4 partition intended for optional vendor RAID/HBA tools:
 - filesystem label: `DRVTOOLS`
@@ -388,6 +390,19 @@ At runtime DriveProof mounts these partitions automatically when present and
 writable. Finished test reports are saved to `DRVPROOF` without requiring a manual
 export step. The web UI shows whether the report was saved or whether export
 failed.
+
+If no DHCP server is available, open `/settings` and save a static network
+configuration. DriveProof writes this file to the FAT32 report partition:
+
+```text
+ip=192.168.1.50/24
+gw=192.168.1.1
+dns=1.1.1.1,8.8.8.8
+```
+
+On boot, the live system reads `driveproof-network.conf` from `DRVPROOF` and
+applies it to the first Ethernet interface through NetworkManager. If the file
+is absent or empty, DHCP remains the default.
 
 Vendor RAID/HBA tools are not redistributed with the public image. If a site is
 licensed to use tools such as `storcli`, `perccli`, `arcconf`, `ssacli`,
@@ -515,10 +530,10 @@ This repository only contains the live client and public integration boundary.
 
 Standalone live boot behavior:
 - networking uses DHCP by default
+- static IP, gateway, and DNS can be configured locally through `/settings`
+  and are stored on the `DRVPROOF` FAT32 partition
 - if no licensed Enterprise Server is discovered, Enterprise features stay
   disabled automatically
-- network configuration controls are only exposed when a licensed Enterprise
-  Server advertises live-client enrollment
 - destructive remote erase is disabled in the open-source live client
 
 Recommended server components:

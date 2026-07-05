@@ -61,6 +61,70 @@ let
     '';
   };
 
+  driveproofNetworkConfig = pkgs.writeShellApplication {
+    name = "driveproof-apply-network-config";
+    runtimeInputs = [
+      pkgs.coreutils
+      pkgs.gawk
+      pkgs.gnugrep
+      pkgs.iproute2
+      pkgs.networkmanager
+      pkgs.util-linux
+    ];
+    text = ''
+      set -euo pipefail
+
+      mount_root=/run/media/driveproof
+      mount_point="$mount_root/DRVPROOF"
+      config_file="$mount_point/driveproof-network.conf"
+
+      mkdir -p "$mount_point"
+      device="$(blkid -L DRVPROOF 2>/dev/null || true)"
+      if [ -n "$device" ] && ! mountpoint -q "$mount_point"; then
+        mount -o rw,umask=000 "$device" "$mount_point" || true
+      fi
+
+      if [ ! -f "$config_file" ]; then
+        exit 0
+      fi
+
+      get_value() {
+        awk -F= -v key="$1" '
+          $1 == key {
+            sub(/^[ \t]+/, "", $2);
+            sub(/[ \t]+$/, "", $2);
+            print $2;
+            exit;
+          }
+        ' "$config_file"
+      }
+
+      ip_addr="$(get_value ip || true)"
+      gateway="$(get_value gw || true)"
+      dns="$(get_value dns || true)"
+
+      if [ -z "$ip_addr" ] || [ -z "$gateway" ]; then
+        exit 0
+      fi
+
+      iface="$(nmcli -t -f DEVICE,TYPE,STATE device status | awk -F: '$2 == "ethernet" { print $1; exit }')"
+      if [ -z "$iface" ]; then
+        exit 0
+      fi
+
+      nmcli connection delete driveproof-static >/dev/null 2>&1 || true
+      nmcli connection add type ethernet ifname "$iface" con-name driveproof-static autoconnect yes \
+        ipv4.method manual ipv4.addresses "$ip_addr" ipv4.gateway "$gateway" \
+        ipv6.method ignore
+
+      if [ -n "$dns" ]; then
+        nmcli connection modify driveproof-static ipv4.dns "$dns"
+      fi
+
+      nmcli connection up driveproof-static || true
+    '';
+  };
+
 in {
   imports = [
     (modulesPath + "/installer/cd-dvd/installation-cd-graphical-base.nix")
@@ -168,6 +232,25 @@ in {
       WorkingDirectory = appSrc;
       Environment = "DRIVEPROOF_STATE_DIR=/var/lib/driveproof";
       ExecStart = "${pythonEnv}/bin/python ${appSrc}/app.py";
+    };
+  };
+
+  systemd.services.driveproof-network-config = {
+    description = "Apply DriveProof static network config from DRVPROOF";
+    wantedBy = [ "multi-user.target" ];
+    after = [ "NetworkManager.service" ];
+    before = [ "driveproof.service" ];
+    path = with pkgs; [
+      coreutils
+      gawk
+      gnugrep
+      iproute2
+      networkmanager
+      util-linux
+    ];
+    serviceConfig = {
+      Type = "oneshot";
+      ExecStart = "${driveproofNetworkConfig}/bin/driveproof-apply-network-config";
     };
   };
 

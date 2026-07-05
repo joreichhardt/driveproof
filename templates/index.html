@@ -201,6 +201,25 @@
           <div class="content-grid lower-grid settings-section">
             <div class="panel inset">
               <div class="section-head">
+                <h2>Network</h2>
+                <p class="muted">DHCP is used by default. Save static values to the FAT report partition when no DHCP server is available.</p>
+              </div>
+              <form id="networkConfigForm" class="settings-form">
+                <label class="field-label" for="networkIp">IP address / prefix</label>
+                <input id="networkIp" class="confirm-input" type="text" placeholder="192.168.1.50/24">
+                <label class="field-label" for="networkGw">Gateway</label>
+                <input id="networkGw" class="confirm-input" type="text" placeholder="192.168.1.1">
+                <label class="field-label" for="networkDns">DNS</label>
+                <input id="networkDns" class="confirm-input" type="text" placeholder="1.1.1.1,8.8.8.8">
+                <div class="stack-buttons">
+                  <button class="run-button" type="submit">Save network config</button>
+                  <button id="clearNetworkConfigButton" class="safe-remove-button" type="button">Use DHCP</button>
+                </div>
+                <div id="networkConfigStatus" class="job-box muted">Loading network config.</div>
+              </form>
+            </div>
+            <div class="panel inset">
+              <div class="section-head">
                 <h2>System tools</h2>
                 <p class="muted">Installed host tools and runtime feature probes.</p>
               </div>
