@@ -433,10 +433,6 @@ h2 {
   overflow-wrap: anywhere;
 }
 
-body[data-page="dashboard"] .diagnostics-menu,
-body[data-page="dashboard"] .erase-menu,
-body[data-page="dashboard"] .compliance-menu,
-body[data-page="dashboard"] .job-panel,
 body[data-page="test"] .erase-menu,
 body[data-page="erase"] .diagnostics-menu {
   display: none;
@@ -1008,6 +1004,91 @@ body[data-page="settings"] .layout {
   grid-template-columns: 1fr;
 }
 
+body[data-page="dashboard"] .layout {
+  grid-template-columns: 1fr;
+}
+
+body[data-page="dashboard"] .panel-list,
+body[data-page="dashboard"] #emptyState,
+body[data-page="dashboard"] #detailView,
+body[data-page="dashboard"] .reports-section,
+body[data-page="dashboard"] .settings-section {
+  display: none !important;
+}
+
+.dashboard-section {
+  display: none;
+}
+
+body[data-page="dashboard"] .dashboard-section {
+  display: grid;
+  gap: 18px;
+}
+
+body:not([data-page="dashboard"]) .dashboard-section {
+  display: none !important;
+}
+
+.dashboard-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+#dashboardControllers.dashboard-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.dashboard-card {
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--panel-soft) 72%, transparent);
+  padding: 14px;
+  display: grid;
+  gap: 12px;
+}
+
+.dashboard-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.dashboard-list {
+  display: grid;
+  gap: 8px;
+}
+
+.dashboard-list-row {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(150px, 0.9fr);
+  gap: 12px;
+  align-items: center;
+  padding: 10px 0;
+  border-top: 1px solid var(--line);
+}
+
+.dashboard-list-row:first-child {
+  border-top: 0;
+  padding-top: 0;
+}
+
+.dashboard-list-row span,
+.dashboard-list-row a {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.dashboard-list-row span:last-child,
+.dashboard-list-row a {
+  color: var(--muted);
+  font-size: 13px;
+  text-align: right;
+}
+
 body[data-page="settings"] .panel-list,
 body[data-page="settings"] #emptyState,
 body[data-page="settings"] #detailView,
@@ -1463,6 +1544,8 @@ body[data-page="reports"] .settings-section {
   .legal-layout,
   .diagnostic-header,
   .content-grid,
+  .dashboard-grid,
+  #dashboardControllers.dashboard-grid,
   .report-diagnostic,
   .report-grid,
   .topbar,
@@ -1500,6 +1583,15 @@ body[data-page="reports"] .settings-section {
   .smart-header,
   .smart-row.full {
     grid-template-columns: 1fr;
+  }
+
+  .dashboard-list-row {
+    grid-template-columns: 1fr;
+  }
+
+  .dashboard-list-row span:last-child,
+  .dashboard-list-row a {
+    text-align: left;
   }
 
   .health-bubble {

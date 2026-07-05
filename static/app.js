@@ -6,6 +6,7 @@ const state = {
   pollTimer: null,
   activeJobsTimer: null,
   activeJobs: [],
+  controllers: null,
   selectedDiskJobs: [],
   smartChart: null,
   selectedMode: "quick",
@@ -92,6 +93,10 @@ function byId(id) {
   return document.getElementById(id);
 }
 
+function pageName() {
+  return document.body.dataset.page || "dashboard";
+}
+
 function resolvedTheme(mode) {
   if (mode === "dark" || mode === "light") return mode;
   return window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
@@ -160,14 +165,15 @@ async function loadSystemTools() {
   const tools = payload.tools || {};
   container.innerHTML = "";
   for (const [name, tool] of Object.entries(tools)) {
+    const label = name === "browser" ? "Browser / PDF engine" : name;
     const featureCount = Object.values(tool.features || {}).filter((feature) => feature.available).length;
     const totalFeatures = Object.keys(tool.features || {}).length;
     const row = document.createElement("div");
     row.className = `system-tool-row ${tool.installed ? "ok" : "missing"}`;
     row.innerHTML = `
       <div>
-        <strong>${name}</strong>
-        <span>${tool.version || "unknown"} · min ${tool.minimum_version}</span>
+        <strong>${label}</strong>
+        <span>${tool.version || "unknown"} · min ${tool.minimum_version}${tool.path ? ` · ${tool.path}` : ""}</span>
       </div>
       <span class="badge ${tool.installed ? "ok" : "danger"}">${tool.installed ? `${featureCount}/${totalFeatures}` : "missing"}</span>
     `;
@@ -318,6 +324,7 @@ function updateRunButtonLabel() {
   const targets = testTargetDisks();
   const count = targets.length;
   byId("runTestButton").textContent = count > 1 ? `Run test on ${count} drives` : "Run test";
+  byId("eraseButton").textContent = count > 1 ? `Zero erase ${count} drives` : "Single-pass zero erase";
 }
 
 function updateSafetyUi() {
@@ -523,6 +530,73 @@ function renderDiskList() {
   updateRunButtonLabel();
 }
 
+function renderDashboard() {
+  const groupContainer = byId("dashboardDiskGroups");
+  if (groupContainer) {
+    groupContainer.innerHTML = "";
+    const groups = ["HDD", "SSD", "NVMe", "Other"];
+    for (const group of groups) {
+      const disks = visibleDisks().filter((disk) => (["HDD", "SSD", "NVMe"].includes(disk.kind) ? disk.kind : "Other") === group);
+      const card = document.createElement("div");
+      card.className = "dashboard-card";
+      card.innerHTML = `
+        <div class="dashboard-card-head">
+          <strong>${group}</strong>
+          <span class="badge">${disks.length}</span>
+        </div>
+        <div class="dashboard-list">
+          ${disks.length ? disks.map((disk) => `
+            <div class="dashboard-list-row">
+              <span>${disk.vendor || ""} ${disk.model || disk.name}</span>
+              <span>${disk.path} · ${formatBytes(disk.size_bytes)} · ${disk.internal ? "internal" : "external"}</span>
+            </div>
+          `).join("") : '<div class="muted">No drives detected.</div>'}
+        </div>
+      `;
+      groupContainer.appendChild(card);
+    }
+  }
+
+  const controllerContainer = byId("dashboardControllers");
+  if (controllerContainer) {
+    const transports = [...new Set(state.disks.map((disk) => disk.transport || "unknown"))].sort();
+    const hosts = state.controllers?.scsi_hosts || [];
+    const installedTools = state.controllers?.installed_vendor_tools || [];
+    const catalog = state.controllers?.vendor_catalog || [];
+    controllerContainer.innerHTML = `
+      <div class="dashboard-card">
+        <div class="dashboard-card-head"><strong>Block interfaces</strong><span class="badge">${transports.length}</span></div>
+        <div class="dashboard-list">
+          ${transports.map((transport) => `<div class="dashboard-list-row"><span>${transport}</span><span>${state.disks.filter((disk) => (disk.transport || "unknown") === transport).length} drive(s)</span></div>`).join("") || '<div class="muted">No interfaces detected.</div>'}
+        </div>
+      </div>
+      <div class="dashboard-card">
+        <div class="dashboard-card-head"><strong>SCSI hosts / HBA</strong><span class="badge">${hosts.length}</span></div>
+        <div class="dashboard-list">
+          ${hosts.map((host) => `
+            <div class="dashboard-list-row">
+              <span>${host.host} · ${host.driver || "unknown"}</span>
+              <span>${[host.model, host.firmware ? `fw ${host.firmware}` : "", host.driver_version ? `drv ${host.driver_version}` : ""].filter(Boolean).join(" · ") || "system driver"}</span>
+            </div>
+          `).join("") || '<div class="muted">No SCSI/HBA hosts detected.</div>'}
+        </div>
+      </div>
+      <div class="dashboard-card">
+        <div class="dashboard-card-head"><strong>RAID vendor tools</strong><span class="badge">${installedTools.length}/${catalog.length}</span></div>
+        <div class="dashboard-list">
+          ${catalog.map((tool) => `
+            <div class="dashboard-list-row">
+              <span>${tool.label}</span>
+              <span>${tool.installed ? "installed" : "not installed"}</span>
+            </div>
+          `).join("") || '<div class="muted">No vendor tool catalog loaded.</div>'}
+          <div class="dashboard-list-row"><span>Controller setup</span><span><a href="/settings">Settings</a></span></div>
+        </div>
+      </div>
+    `;
+  }
+}
+
 function smartRows(smartPayload) {
   return smartPayload?.ata_smart_attributes?.table || [];
 }
@@ -611,7 +685,6 @@ function renderEraseOptions(disk, erase) {
     basicButton.disabled = true;
     enhancedButton.disabled = true;
   }
-  byId("eraseConfirmInput").value = "";
 }
 
 function renderNvmeEraseOptions(nvmeErase) {
@@ -762,6 +835,7 @@ function renderSmart(smart) {
 async function loadReports() {
   const payload = await fetchJson("/api/reports");
   const container = byId("reportsList");
+  if (!container) return;
   container.innerHTML = "";
   if (!payload.reports.length) {
     container.innerHTML = `<div class="job-box muted">No reports saved yet.</div>`;
@@ -795,9 +869,13 @@ async function loadReports() {
         }
       }
     };
-
     container.appendChild(item);
   }
+}
+
+async function loadControllers() {
+  state.controllers = await fetchJson("/api/controllers");
+  renderDashboard();
 }
 
 function renderModeSelector(modes) {
@@ -946,6 +1024,15 @@ async function refreshDisks() {
     : "SMART missing: install smartmontools";
   renderDiskList();
   await loadReports();
+  await loadControllers();
+  renderDashboard();
+
+  if (pageName() === "dashboard") {
+    state.selectedDisk = null;
+    byId("detailView").classList.add("hidden");
+    byId("emptyState").classList.add("hidden");
+    return;
+  }
 
   const visible = visibleDisks();
   const stored = localStorage.getItem("selectedDiskName");
@@ -1070,42 +1157,75 @@ async function abortExternalSelftest() {
 }
 
 async function eraseSelectedDisk() {
-  if (!state.selectedDisk) return;
-  const confirmation = byId("eraseConfirmInput").value.trim();
-  const payload = await fetchJson(`/api/disks/${state.selectedDisk.name}/erase`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ confirmation, allow_internal: state.settings.allowInternalErase, compliance_profile: state.selectedComplianceProfile }),
-  });
-  state.currentJobId = payload.job_id;
+  const targets = testTargetDisks().filter((disk) => !hasAppJob(disk.name));
+  if (!targets.length) return;
+  const started = [];
+  const failed = [];
+  for (const disk of targets) {
+    try {
+      const payload = await fetchJson(`/api/disks/${disk.name}/erase`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ allow_internal: state.settings.allowInternalErase, compliance_profile: state.selectedComplianceProfile }),
+      });
+      started.push({ disk, jobId: payload.job_id });
+    } catch (error) {
+      failed.push(`${disk.name}: ${error.message}`);
+    }
+  }
+  const selectedStarted = started.find((item) => item.disk.name === state.selectedDisk?.name) || started[0];
+  if (selectedStarted) state.currentJobId = selectedStarted.jobId;
   await refreshActiveJobs();
-  pollSelectedJob();
+  if (state.currentJobId) pollSelectedJob();
+  byId("jobStatus").textContent = [`started ${started.length} erase job${started.length === 1 ? "" : "s"}`, failed.length ? `failed: ${failed.join("; ")}` : ""].filter(Boolean).join(" · ");
 }
 
 async function secureEraseSelectedDisk(method = "basic") {
-  if (!state.selectedDisk) return;
-  const confirmation = byId("eraseConfirmInput").value.trim();
-  const payload = await fetchJson(`/api/disks/${state.selectedDisk.name}/secure-erase`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ confirmation, allow_internal: state.settings.allowInternalErase, method, compliance_profile: state.selectedComplianceProfile }),
-  });
-  state.currentJobId = payload.job_id;
+  const targets = testTargetDisks().filter((disk) => !hasAppJob(disk.name));
+  if (!targets.length) return;
+  const started = [];
+  const failed = [];
+  for (const disk of targets) {
+    try {
+      const payload = await fetchJson(`/api/disks/${disk.name}/secure-erase`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ allow_internal: state.settings.allowInternalErase, method, compliance_profile: state.selectedComplianceProfile }),
+      });
+      started.push({ disk, jobId: payload.job_id });
+    } catch (error) {
+      failed.push(`${disk.name}: ${error.message}`);
+    }
+  }
+  const selectedStarted = started.find((item) => item.disk.name === state.selectedDisk?.name) || started[0];
+  if (selectedStarted) state.currentJobId = selectedStarted.jobId;
   await refreshActiveJobs();
-  pollSelectedJob();
+  if (state.currentJobId) pollSelectedJob();
+  byId("jobStatus").textContent = [`started ${started.length} secure erase job${started.length === 1 ? "" : "s"}`, failed.length ? `failed: ${failed.join("; ")}` : ""].filter(Boolean).join(" · ");
 }
 
 async function nvmeEraseSelectedDisk(method = "format") {
-  if (!state.selectedDisk) return;
-  const confirmation = byId("eraseConfirmInput").value.trim();
-  const payload = await fetchJson(`/api/disks/${state.selectedDisk.name}/nvme-erase`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ confirmation, allow_internal: state.settings.allowInternalErase, method, compliance_profile: state.selectedComplianceProfile }),
-  });
-  state.currentJobId = payload.job_id;
+  const targets = testTargetDisks().filter((disk) => !hasAppJob(disk.name));
+  if (!targets.length) return;
+  const started = [];
+  const failed = [];
+  for (const disk of targets) {
+    try {
+      const payload = await fetchJson(`/api/disks/${disk.name}/nvme-erase`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ allow_internal: state.settings.allowInternalErase, method, compliance_profile: state.selectedComplianceProfile }),
+      });
+      started.push({ disk, jobId: payload.job_id });
+    } catch (error) {
+      failed.push(`${disk.name}: ${error.message}`);
+    }
+  }
+  const selectedStarted = started.find((item) => item.disk.name === state.selectedDisk?.name) || started[0];
+  if (selectedStarted) state.currentJobId = selectedStarted.jobId;
   await refreshActiveJobs();
-  pollSelectedJob();
+  if (state.currentJobId) pollSelectedJob();
+  byId("jobStatus").textContent = [`started ${started.length} NVMe erase job${started.length === 1 ? "" : "s"}`, failed.length ? `failed: ${failed.join("; ")}` : ""].filter(Boolean).join(" · ");
 }
 
 function bindSettings() {

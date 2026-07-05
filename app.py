@@ -161,11 +161,11 @@ SYSTEM_TOOL_REQUIREMENTS = {
             "safe_remove": ["udisksctl", "--help"],
         },
     },
-    "chromium": {
-        "package": "chromium or google-chrome",
+    "browser": {
+        "package": "chromium, chromium-browser, google-chrome, or chrome",
         "minimum_version": "120",
         "features": {
-            "headless_pdf": ["chromium", "--headless", "--help"],
+            "headless_pdf": ["browser", "--headless", "--help"],
         },
     },
 }
@@ -448,11 +448,11 @@ def command_version_string(tool: str) -> str:
         "hdparm": ["hdparm", "-V"],
         "nvme": ["nvme", "version"],
         "udisksctl": ["udisksctl", "--version"],
-        "chromium": [chrome_binary() or "chromium", "--version"],
+        "browser": [chrome_binary() or "chromium", "--version"],
     }
     args = probes.get(tool, [tool, "--version"])
     rc, out, err = run_command(args, timeout=10)
-    if rc != 0 and tool == "chromium":
+    if rc != 0 and tool == "browser":
         return "not installed"
     text = (out.strip() or err.strip()).splitlines()
     return text[0] if text else "unknown"
@@ -463,7 +463,8 @@ def feature_probe(args: list[str], expected_tokens: list[str] | None = None) -> 
     text = f"{out}\n{err}"
     available = rc == 0 or bool(out.strip() or err.strip())
     if expected_tokens:
-        available = available and all(token in text for token in expected_tokens)
+        lower_text = text.lower()
+        available = available and all(token.lower() in lower_text for token in expected_tokens)
     return {
         "available": available,
         "return_code": rc,
@@ -473,11 +474,11 @@ def feature_probe(args: list[str], expected_tokens: list[str] | None = None) -> 
 def system_tool_inventory() -> dict[str, Any]:
     tools = {}
     for name, requirement in SYSTEM_TOOL_REQUIREMENTS.items():
-        path = chrome_binary() if name == "chromium" else tool_path(name)
+        path = chrome_binary() if name == "browser" else tool_path(name)
         features = {}
         for feature, probe_args in requirement["features"].items():
             args = list(probe_args)
-            if name == "chromium" and path:
+            if name == "browser" and path:
                 args[0] = path
             expected = None
             if name == "nvme" and feature == "format_nvm":
@@ -813,6 +814,66 @@ def list_vendor_tools() -> dict[str, Any]:
         "roots": [str(root) for root in vendor_tool_roots()],
         "catalog": catalog,
         "tools": tools,
+    }
+
+
+def read_first_existing_text(paths: list[Path]) -> str | None:
+    for path in paths:
+        try:
+            value = path.read_text(encoding="utf-8", errors="ignore").strip()
+        except OSError:
+            continue
+        if value:
+            return value
+    return None
+
+
+def driver_from_sysfs_path(path: Path) -> str | None:
+    try:
+        current = path.resolve()
+    except OSError:
+        return None
+    while current != Path("/sys"):
+        driver_link = current / "driver"
+        if driver_link.is_symlink():
+            try:
+                driver = driver_link.resolve().name
+            except OSError:
+                driver = None
+            if driver and driver != "driver":
+                return driver
+        current = current.parent
+    return None
+
+
+def list_storage_controllers() -> dict[str, Any]:
+    scsi_hosts = []
+    for host_path in sorted(Path("/sys/class/scsi_host").glob("host*")):
+        host_name = host_path.name
+        proc_name = read_first_existing_text([host_path / "proc_name"])
+        model = read_first_existing_text([host_path / "model_name", host_path / "model"])
+        firmware = read_first_existing_text([host_path / "fw_version", host_path / "firmware_version"])
+        driver_version = read_first_existing_text([host_path / "driver_version"])
+        driver = driver_from_sysfs_path(host_path) or proc_name
+        scsi_hosts.append(
+            {
+                "host": host_name,
+                "driver": driver or proc_name or "unknown",
+                "proc_name": proc_name,
+                "model": model,
+                "firmware": firmware,
+                "driver_version": driver_version,
+                "sysfs": str(host_path),
+            }
+        )
+
+    vendor_tools = list_vendor_tools()
+    installed_tools = [tool for tool in vendor_tools["tools"] if tool.get("executable")]
+    return {
+        "scsi_hosts": scsi_hosts,
+        "vendor_catalog": vendor_tools["catalog"],
+        "installed_vendor_tools": installed_tools,
+        "note": "Hardware RAID controllers may expose logical volumes only unless the matching vendor CLI is installed.",
     }
 
 
@@ -3101,6 +3162,14 @@ def api_disks():
         return jsonify({"error": str(exc)}), 500
 
 
+@app.get("/api/controllers")
+def api_controllers():
+    try:
+        return jsonify(list_storage_controllers())
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 500
+
+
 @app.get("/api/disks/<device_name>")
 def api_disk_detail(device_name: str):
     try:
@@ -3168,16 +3237,12 @@ def api_safe_remove(device_name: str):
 @app.post("/api/disks/<device_name>/erase")
 def api_erase_disk(device_name: str):
     payload = request.get_json(silent=True) or {}
-    confirmation = (payload.get("confirmation") or "").strip()
     allow_internal = bool(payload.get("allow_internal"))
     compliance_profile = payload.get("compliance_profile") or "nist_clear"
     try:
         disk = get_disk(device_name)
         if has_active_job_for_device(device_name):
             return jsonify({"error": "An app job is already running for this drive."}), 409
-        expected = {disk["path"], disk["serial"]}
-        if confirmation not in expected:
-            return jsonify({"error": "Confirmation must exactly match the device path or serial number."}), 400
         job_id = uuid.uuid4().hex[:12]
         job = TestJob(
             id=job_id,
@@ -3199,7 +3264,6 @@ def api_erase_disk(device_name: str):
 @app.post("/api/disks/<device_name>/secure-erase")
 def api_secure_erase_disk(device_name: str):
     payload = request.get_json(silent=True) or {}
-    confirmation = (payload.get("confirmation") or "").strip()
     allow_internal = bool(payload.get("allow_internal"))
     method = (payload.get("method") or "basic").strip().lower()
     compliance_profile = payload.get("compliance_profile") or ("nist_purge" if method == "enhanced" else "nist_clear")
@@ -3216,9 +3280,6 @@ def api_secure_erase_disk(device_name: str):
             return jsonify({"error": "ATA Secure Erase is not supported by this drive."}), 400
         if has_active_job_for_device(device_name):
             return jsonify({"error": "An app job is already running for this drive."}), 409
-        expected = {disk["path"], disk["serial"]}
-        if confirmation not in expected:
-            return jsonify({"error": "Confirmation must exactly match the device path or serial number."}), 400
         job_id = uuid.uuid4().hex[:12]
         job = TestJob(
             id=job_id,
@@ -3240,7 +3301,6 @@ def api_secure_erase_disk(device_name: str):
 @app.post("/api/disks/<device_name>/nvme-erase")
 def api_nvme_erase_disk(device_name: str):
     payload = request.get_json(silent=True) or {}
-    confirmation = (payload.get("confirmation") or "").strip()
     allow_internal = bool(payload.get("allow_internal"))
     method = (payload.get("method") or "format").strip().lower()
     compliance_profile = payload.get("compliance_profile") or "nist_purge"
@@ -3258,9 +3318,6 @@ def api_nvme_erase_disk(device_name: str):
             return jsonify({"error": "NVMe Sanitize Block Erase is not supported by this controller."}), 400
         if has_active_job_for_device(device_name):
             return jsonify({"error": "An app job is already running for this drive."}), 409
-        expected = {disk["path"], disk["serial"]}
-        if confirmation not in expected:
-            return jsonify({"error": "Confirmation must exactly match the device path or serial number."}), 400
         job_id = uuid.uuid4().hex[:12]
         job = TestJob(
             id=job_id,

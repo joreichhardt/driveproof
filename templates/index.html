@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>DriveProof</title>
     <link rel="icon" type="image/png" href="{{ url_for('static', filename='assets/driveproof-logo.png') }}">
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=20260705-vendor-settings1">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=20260705-dashboard-overview1">
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   </head>
   <body data-page="{{ active_page or 'dashboard' }}">
@@ -78,6 +78,25 @@
         </section>
 
         <section class="panel panel-detail">
+          <div class="dashboard-section">
+            <div class="content-grid lower-grid">
+              <div class="panel inset">
+                <div class="section-head">
+                  <h2>Drive overview</h2>
+                  <p class="muted">Detected drives grouped by type.</p>
+                </div>
+                <div id="dashboardDiskGroups" class="dashboard-grid"></div>
+              </div>
+              <div class="panel inset">
+                <div class="section-head">
+                  <h2>Controllers</h2>
+                  <p class="muted">HBA, RAID, and vendor-tool visibility.</p>
+                </div>
+                <div id="dashboardControllers" class="dashboard-grid"></div>
+              </div>
+            </div>
+          </div>
+
           <div id="emptyState" class="empty-state">
             <h2>No drive selected</h2>
             <p>Select a drive on the left, review SMART data, and start a read test.</p>
@@ -156,8 +175,7 @@
                   </div>
                   <div id="dangerZone" class="danger-zone hidden">
                     <div class="danger-title">Destructive erase</div>
-                    <div class="muted">Enter the serial number or device path to confirm. Reports include a signed certificate, audit chain, and export bundle.</div>
-                    <input id="eraseConfirmInput" class="confirm-input" type="text" placeholder="/dev/sdX or serial number">
+                    <div class="muted">Erase applies to the selected batch drives, or to the currently selected drive if no batch is selected. Reports include a signed certificate, audit chain, and export bundle.</div>
                     <button id="eraseButton" class="erase-button">Single-pass zero erase</button>
                     <div id="secureEraseHint" class="muted">Checking ATA Secure Erase support.</div>
                     <button id="secureEraseButton" class="erase-button secondary">ATA Secure Erase</button>
@@ -242,6 +260,6 @@
       </footer>
     </div>
 
-    <script src="{{ url_for('static', filename='app.js') }}?v=20260705-vendor-settings1"></script>
+    <script src="{{ url_for('static', filename='app.js') }}?v=20260705-dashboard-overview1"></script>
   </body>
   </html>
