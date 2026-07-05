@@ -83,8 +83,50 @@ COMPLIANCE_PROFILES = {
     "nist_purge": {
         "label": "NIST SP 800-88 Purge",
         "standard": "NIST SP 800-88 Rev. 1 Purge",
-        "description": "Maps to firmware cryptographic erase, ATA Enhanced Secure Erase, or future NVMe sanitize workflows where supported.",
+        "description": "Maps to firmware cryptographic erase, ATA Enhanced Secure Erase, or NVMe sanitize workflows where supported.",
         "requires_erase": True,
+    },
+}
+
+SYSTEM_TOOL_REQUIREMENTS = {
+    "smartctl": {
+        "package": "smartmontools",
+        "minimum_version": "7.4",
+        "features": {
+            "json_output": ["smartctl", "-j", "--version"],
+            "selftests": ["smartctl", "--version"],
+        },
+    },
+    "hdparm": {
+        "package": "hdparm",
+        "minimum_version": "9.65",
+        "features": {
+            "ata_secure_erase": ["hdparm", "--security-help"],
+        },
+    },
+    "nvme": {
+        "package": "nvme-cli",
+        "minimum_version": "2.8",
+        "features": {
+            "format_nvm": ["nvme", "format", "--help"],
+            "sanitize": ["nvme", "sanitize", "--help"],
+            "sanitize_log": ["nvme", "sanitize-log", "--help"],
+            "json_output": ["nvme", "version"],
+        },
+    },
+    "udisksctl": {
+        "package": "udisks2",
+        "minimum_version": "2.10",
+        "features": {
+            "safe_remove": ["udisksctl", "--help"],
+        },
+    },
+    "chromium": {
+        "package": "chromium or google-chrome",
+        "minimum_version": "120",
+        "features": {
+            "headless_pdf": ["chromium", "--headless", "--help"],
+        },
     },
 }
 
@@ -354,6 +396,72 @@ def run_command(args: list[str], timeout: int = 20) -> tuple[int, str, str]:
         return 127, "", f"Command not found: {args[0]}"
     except subprocess.TimeoutExpired:
         return 124, "", f"Command timed out: {' '.join(args)}"
+
+
+def command_version_string(tool: str) -> str:
+    probes = {
+        "smartctl": ["smartctl", "--version"],
+        "hdparm": ["hdparm", "-V"],
+        "nvme": ["nvme", "version"],
+        "udisksctl": ["udisksctl", "--version"],
+        "chromium": [chrome_binary() or "chromium", "--version"],
+    }
+    args = probes.get(tool, [tool, "--version"])
+    rc, out, err = run_command(args, timeout=10)
+    if rc != 0 and tool == "chromium":
+        return "not installed"
+    text = (out.strip() or err.strip()).splitlines()
+    return text[0] if text else "unknown"
+
+
+def feature_probe(args: list[str], expected_tokens: list[str] | None = None) -> dict[str, Any]:
+    rc, out, err = run_command(args, timeout=10)
+    text = f"{out}\n{err}"
+    available = rc == 0 or bool(out.strip() or err.strip())
+    if expected_tokens:
+        available = available and all(token in text for token in expected_tokens)
+    return {
+        "available": available,
+        "return_code": rc,
+    }
+
+
+def system_tool_inventory() -> dict[str, Any]:
+    tools = {}
+    for name, requirement in SYSTEM_TOOL_REQUIREMENTS.items():
+        path = chrome_binary() if name == "chromium" else tool_path(name)
+        features = {}
+        for feature, probe_args in requirement["features"].items():
+            args = list(probe_args)
+            if name == "chromium" and path:
+                args[0] = path
+            expected = None
+            if name == "nvme" and feature == "format_nvm":
+                expected = ["--ses"]
+            elif name == "nvme" and feature == "sanitize":
+                expected = ["--sanact"]
+            elif name == "nvme" and feature == "sanitize_log":
+                expected = ["sanitize-log"]
+            elif name == "smartctl" and feature == "json_output":
+                expected = ["JSON"]
+            elif name == "hdparm" and feature == "ata_secure_erase":
+                expected = ["security"]
+            if path:
+                features[feature] = feature_probe(args, expected_tokens=expected)
+            else:
+                features[feature] = {"available": False, "return_code": 127}
+        tools[name] = {
+            "installed": bool(path),
+            "path": path,
+            "package": requirement["package"],
+            "minimum_version": requirement["minimum_version"],
+            "version": command_version_string(name) if path else "not installed",
+            "features": features,
+        }
+    return {
+        "generated_at": utc_now_iso(),
+        "tools": tools,
+    }
 
 
 def list_disks() -> list[dict[str, Any]]:
@@ -1286,16 +1394,31 @@ def nvme_erase_capabilities(disk: dict[str, Any]) -> dict[str, Any]:
         return {"supported": False, "reason": "nvme-cli is not installed in this image."}
     rc, out, err = run_command(["nvme", "id-ctrl", disk["path"], "-o", "json"], timeout=30)
     details: dict[str, Any] = {}
+    sanicap = 0
     if out.strip():
         try:
             details = json.loads(out)
+            sanicap = parse_intish(details.get("sanicap")) or 0
         except json.JSONDecodeError:
             details = {"raw": out.strip()[:1000]}
+    crypto_supported = bool(sanicap & 0b001)
+    block_supported = bool(sanicap & 0b010)
+    overwrite_supported = bool(sanicap & 0b100)
+    methods = ["format"]
+    if crypto_supported:
+        methods.append("sanitize_crypto")
+    if block_supported:
+        methods.append("sanitize_block")
     return {
         "supported": True,
-        "reason": "NVMe Format NVM user-data erase is available through nvme-cli. This is destructive and requires exact device confirmation.",
+        "reason": "NVMe Format NVM is available. NVMe Sanitize is offered when reported by controller capabilities.",
         "tool": "nvme-cli",
-        "method": "format_nvm_user_data_erase",
+        "format_supported": True,
+        "sanitize_supported": crypto_supported or block_supported or overwrite_supported,
+        "sanitize_crypto_supported": crypto_supported,
+        "sanitize_block_supported": block_supported,
+        "sanitize_overwrite_supported": overwrite_supported,
+        "methods": methods,
         "details": details,
     }
 
@@ -1337,7 +1460,7 @@ def parse_intish(value: Any) -> int | None:
         return None
     token = str(value).strip().split()[0]
     try:
-        return int(token)
+        return int(token, 0)
     except ValueError:
         return None
 
@@ -1719,6 +1842,8 @@ def running_job_snapshot_test(job: TestJob, disk: dict[str, Any]) -> dict[str, A
         "secure_erase_ata": "Running ATA Secure Erase",
         "secure_erase_ata_enhanced": "Running ATA Enhanced Secure Erase",
         "nvme_format": "Running NVMe Format Erase",
+        "nvme_sanitize_crypto": "Running NVMe Sanitize Crypto Erase",
+        "nvme_sanitize_block": "Running NVMe Sanitize Block Erase",
     }
     claim_map = {
         "quick": "The sample read test is still running. This report is only a snapshot.",
@@ -1730,6 +1855,8 @@ def running_job_snapshot_test(job: TestJob, disk: dict[str, Any]) -> dict[str, A
         "secure_erase_ata": "The ATA Secure Erase is still running. This report is only a snapshot.",
         "secure_erase_ata_enhanced": "The ATA Enhanced Secure Erase is still running. This report is only a snapshot.",
         "nvme_format": "The NVMe Format Erase is still running. This report is only a snapshot.",
+        "nvme_sanitize_crypto": "The NVMe Sanitize Crypto Erase is still running. This report is only a snapshot.",
+        "nvme_sanitize_block": "The NVMe Sanitize Block Erase is still running. This report is only a snapshot.",
     }
     credibility = "low" if job.mode not in {"smart_short", "smart_extended"} else "medium"
     if job.mode in {"smart_short", "smart_extended"}:
@@ -2479,6 +2606,117 @@ def run_nvme_format_erase(disk: dict[str, Any], job: TestJob, allow_internal: bo
     }
 
 
+def nvme_sanitize_log(device_path: str) -> dict[str, Any]:
+    rc, out, err = run_command(["nvme", "sanitize-log", device_path, "-o", "json"], timeout=30)
+    if rc != 0:
+        return {"available": False, "error": err.strip() or out.strip() or "sanitize-log failed"}
+    try:
+        payload = json.loads(out) if out.strip() else {}
+    except json.JSONDecodeError:
+        return {"available": True, "raw": out.strip()}
+    payload["available"] = True
+    return payload
+
+
+def nvme_sanitize_progress(log: dict[str, Any]) -> tuple[float | None, bool, str]:
+    sprog = parse_intish(log.get("sprog"))
+    sstat = parse_intish(log.get("sstat"))
+    status_text = str(log.get("sstat") or log.get("status") or "sanitize in progress")
+    complete = False
+    progress: float | None = None
+    if sprog is not None:
+        progress = max(0.0, min(1.0, sprog / 65535))
+        complete = sprog >= 65535
+    if sstat is not None:
+        status_bits = sstat & 0b111
+        complete = complete or status_bits in {1, 2, 3}
+        status_text = f"sanitize status {sstat}"
+    return progress, complete, status_text
+
+
+def run_nvme_sanitize_erase(
+    disk: dict[str, Any],
+    job: TestJob,
+    *,
+    method: str,
+    allow_internal: bool = False,
+) -> dict[str, Any]:
+    import subprocess
+
+    caps = nvme_erase_capabilities(disk)
+    if method == "crypto" and not caps.get("sanitize_crypto_supported"):
+        raise RuntimeError("NVMe Sanitize Crypto Erase is not reported as supported by this controller.")
+    if method == "block" and not caps.get("sanitize_block_supported"):
+        raise RuntimeError("NVMe Sanitize Block Erase is not reported as supported by this controller.")
+    if method not in {"crypto", "block"}:
+        raise RuntimeError(f"Unsupported NVMe sanitize method: {method}")
+
+    erase_allowed(disk, allow_internal=allow_internal)
+    actions = unmount_disk_children(disk["name"])
+    sanact = "4" if method == "crypto" else "2"
+    method_name = "crypto_erase" if method == "crypto" else "block_erase"
+    label = "NVMe Sanitize Crypto Erase" if method == "crypto" else "NVMe Sanitize Block Erase"
+    started = time.time()
+    started_iso = utc_now_iso()
+
+    job.progress = 0.02
+    job.current_step = f"{label} started"
+    persist_job_state(job)
+
+    proc = subprocess.run(
+        resolved_command(["nvme", "sanitize", disk["path"], f"--sanact={sanact}", "--ause"]),
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=60,
+    )
+    if proc.returncode != 0:
+        raise RuntimeError(proc.stderr.strip() or proc.stdout.strip() or f"{label} failed to start.")
+
+    final_log: dict[str, Any] = {}
+    while True:
+        final_log = nvme_sanitize_log(disk["path"])
+        progress, complete, status_text = nvme_sanitize_progress(final_log)
+        elapsed_min = int((time.time() - started) / 60)
+        if progress is not None:
+            job.progress = max(0.02, min(0.98, progress))
+            job.current_step = f"{label} running ({round(progress * 100)}%, {elapsed_min} min)"
+        else:
+            job.current_step = f"{label} running ({status_text}, {elapsed_min} min)"
+        persist_job_state(job)
+        if complete:
+            break
+        time.sleep(15)
+
+    job.progress = 0.99
+    job.current_step = "Verifying erased samples"
+    persist_job_state(job)
+    verification = verify_erase_samples(disk["path"], disk["size_bytes"], expected_byte=0)
+
+    duration = max(0.001, time.time() - started)
+    compliance = compliance_from_options(job.options)
+    return {
+        "type": f"nvme_sanitize_{method}",
+        "label": label,
+        "credibility_level": "destructive",
+        "buyer_claim": f"The NVMe drive was erased using {label}, followed by sample verification.",
+        "duration_s": round(duration, 2),
+        "actions": actions,
+        "erasure": {
+            "method": f"nvme_sanitize_{method_name}",
+            "tool": "nvme-cli",
+            "started_at": started_iso,
+            "completed_at": utc_now_iso(),
+            "device": disk["path"],
+            "serial": disk.get("serial"),
+            "sanitize_log": final_log,
+            "compliance_profile": compliance,
+            "verification": "nvme-cli sanitize completion plus post-erase sample reads. NVMe controller behavior can vary by firmware.",
+            "verification_result": verification,
+        },
+    }
+
+
 def run_test_job(job_id: str) -> None:
     with jobs_lock:
         job = jobs.get(job_id) or get_job(job_id)
@@ -2517,6 +2755,13 @@ def run_test_job(job_id: str) -> None:
             )
         elif job.mode == "nvme_format":
             test_result = run_nvme_format_erase(disk, job, allow_internal=allow_internal_erase)
+        elif job.mode in {"nvme_sanitize_crypto", "nvme_sanitize_block"}:
+            test_result = run_nvme_sanitize_erase(
+                disk,
+                job,
+                method="crypto" if job.mode == "nvme_sanitize_crypto" else "block",
+                allow_internal=allow_internal_erase,
+            )
         else:
             raise ValueError(f"Unsupported mode: {job.mode}")
 
@@ -2818,12 +3063,20 @@ def api_nvme_erase_disk(device_name: str):
     payload = request.get_json(silent=True) or {}
     confirmation = (payload.get("confirmation") or "").strip()
     allow_internal = bool(payload.get("allow_internal"))
+    method = (payload.get("method") or "format").strip().lower()
     compliance_profile = payload.get("compliance_profile") or "nist_purge"
+    allowed_methods = {"format", "sanitize_crypto", "sanitize_block"}
+    if method not in allowed_methods:
+        return jsonify({"error": "method must be format, sanitize_crypto, or sanitize_block"}), 400
     try:
         disk = get_disk(device_name)
         caps = nvme_erase_capabilities(disk)
         if not caps.get("supported"):
             return jsonify({"error": caps.get("reason") or "NVMe erase is not available."}), 400
+        if method == "sanitize_crypto" and not caps.get("sanitize_crypto_supported"):
+            return jsonify({"error": "NVMe Sanitize Crypto Erase is not supported by this controller."}), 400
+        if method == "sanitize_block" and not caps.get("sanitize_block_supported"):
+            return jsonify({"error": "NVMe Sanitize Block Erase is not supported by this controller."}), 400
         if has_active_job_for_device(device_name):
             return jsonify({"error": "An app job is already running for this drive."}), 409
         expected = {disk["path"], disk["serial"]}
@@ -2833,9 +3086,13 @@ def api_nvme_erase_disk(device_name: str):
         job = TestJob(
             id=job_id,
             device=device_name,
-            mode="nvme_format",
+            mode={
+                "format": "nvme_format",
+                "sanitize_crypto": "nvme_sanitize_crypto",
+                "sanitize_block": "nvme_sanitize_block",
+            }[method],
             created_at=utc_now_iso(),
-            options={"allow_internal_erase": allow_internal, "compliance_profile": compliance_profile},
+            options={"allow_internal_erase": allow_internal, "nvme_erase_method": method, "compliance_profile": compliance_profile},
         )
         with jobs_lock:
             jobs[job_id] = job
@@ -2904,6 +3161,11 @@ def api_export_targets():
 @app.get("/api/compliance-profiles")
 def api_compliance_profiles():
     return jsonify({"profiles": COMPLIANCE_PROFILES})
+
+
+@app.get("/api/system-tools")
+def api_system_tools():
+    return jsonify(system_tool_inventory())
 
 
 @app.get("/api/enterprise/status")

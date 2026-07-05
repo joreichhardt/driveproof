@@ -33,6 +33,8 @@ const MODE_HINTS = {
   secure_erase_ata: "ATA Secure Erase. Destructive.",
   secure_erase_ata_enhanced: "ATA Enhanced Secure Erase. Destructive.",
   nvme_format: "NVMe Format NVM user-data erase. Destructive.",
+  nvme_sanitize_crypto: "NVMe Sanitize Crypto Erase. Destructive.",
+  nvme_sanitize_block: "NVMe Sanitize Block Erase. Destructive.",
   smart_extended_external: "SMART self-test started outside the app.",
 };
 
@@ -46,6 +48,8 @@ const MODE_LABELS = {
   secure_erase_ata: "ATA Secure Erase",
   secure_erase_ata_enhanced: "ATA Enhanced Secure Erase",
   nvme_format: "NVMe Format Erase",
+  nvme_sanitize_crypto: "NVMe Sanitize Crypto",
+  nvme_sanitize_block: "NVMe Sanitize Block",
   smart_extended_external: "External SMART Test",
 };
 
@@ -147,6 +151,28 @@ async function loadComplianceProfiles() {
   const payload = await fetchJson("/api/compliance-profiles");
   state.complianceProfiles = payload.profiles || {};
   renderComplianceProfiles();
+}
+
+async function loadSystemTools() {
+  const payload = await fetchJson("/api/system-tools");
+  const container = byId("systemToolsList");
+  if (!container) return;
+  const tools = payload.tools || {};
+  container.innerHTML = "";
+  for (const [name, tool] of Object.entries(tools)) {
+    const featureCount = Object.values(tool.features || {}).filter((feature) => feature.available).length;
+    const totalFeatures = Object.keys(tool.features || {}).length;
+    const row = document.createElement("div");
+    row.className = `system-tool-row ${tool.installed ? "ok" : "missing"}`;
+    row.innerHTML = `
+      <div>
+        <strong>${name}</strong>
+        <span>${tool.version || "unknown"} · min ${tool.minimum_version}</span>
+      </div>
+      <span class="badge ${tool.installed ? "ok" : "danger"}">${tool.installed ? `${featureCount}/${totalFeatures}` : "missing"}</span>
+    `;
+    container.appendChild(row);
+  }
 }
 
 function renderComplianceProfiles() {
@@ -299,7 +325,9 @@ function setControlsBusy() {
   byId("eraseButton").disabled = appBusy || !state.settings.enableDestructive || internalEraseBlocked;
   byId("secureEraseButton").disabled = appBusy || !state.settings.enableDestructive || internalEraseBlocked || !state.secureErase?.basic_supported;
   byId("enhancedSecureEraseButton").disabled = appBusy || !state.settings.enableDestructive || internalEraseBlocked || !state.secureErase?.enhanced_supported;
-  byId("nvmeEraseButton").disabled = appBusy || !state.settings.enableDestructive || internalEraseBlocked || !state.nvmeErase?.supported;
+  byId("nvmeEraseButton").disabled = appBusy || !state.settings.enableDestructive || internalEraseBlocked || !state.nvmeErase?.format_supported;
+  byId("nvmeSanitizeCryptoButton").disabled = appBusy || !state.settings.enableDestructive || internalEraseBlocked || !state.nvmeErase?.sanitize_crypto_supported;
+  byId("nvmeSanitizeBlockButton").disabled = appBusy || !state.settings.enableDestructive || internalEraseBlocked || !state.nvmeErase?.sanitize_block_supported;
   byId("abortSelftestButton").disabled = false;
   updateRunButtonLabel();
 }
@@ -522,14 +550,24 @@ function renderEraseOptions(disk, erase) {
 function renderNvmeEraseOptions(nvmeErase) {
   state.nvmeErase = nvmeErase;
   const hint = byId("nvmeEraseHint");
-  const button = byId("nvmeEraseButton");
-  if (!hint || !button) return;
+  const formatButton = byId("nvmeEraseButton");
+  const cryptoButton = byId("nvmeSanitizeCryptoButton");
+  const blockButton = byId("nvmeSanitizeBlockButton");
+  if (!hint || !formatButton || !cryptoButton || !blockButton) return;
   if (nvmeErase?.supported) {
-    hint.textContent = nvmeErase.reason || "NVMe Format NVM user-data erase is available.";
-    button.disabled = !state.settings.enableDestructive;
+    const methods = [];
+    if (nvmeErase.format_supported) methods.push("Format");
+    if (nvmeErase.sanitize_crypto_supported) methods.push("Sanitize Crypto");
+    if (nvmeErase.sanitize_block_supported) methods.push("Sanitize Block");
+    hint.textContent = `${nvmeErase.reason || "NVMe erase support detected"} Available: ${methods.join(", ")}.`;
+    formatButton.disabled = !state.settings.enableDestructive || !nvmeErase.format_supported;
+    cryptoButton.disabled = !state.settings.enableDestructive || !nvmeErase.sanitize_crypto_supported;
+    blockButton.disabled = !state.settings.enableDestructive || !nvmeErase.sanitize_block_supported;
   } else {
     hint.textContent = nvmeErase?.reason || "NVMe sanitize/format is not available for this drive.";
-    button.disabled = true;
+    formatButton.disabled = true;
+    cryptoButton.disabled = true;
+    blockButton.disabled = true;
   }
 }
 
@@ -990,13 +1028,13 @@ async function secureEraseSelectedDisk(method = "basic") {
   pollSelectedJob();
 }
 
-async function nvmeEraseSelectedDisk() {
+async function nvmeEraseSelectedDisk(method = "format") {
   if (!state.selectedDisk) return;
   const confirmation = byId("eraseConfirmInput").value.trim();
   const payload = await fetchJson(`/api/disks/${state.selectedDisk.name}/nvme-erase`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ confirmation, allow_internal: state.settings.allowInternalErase, compliance_profile: state.selectedComplianceProfile }),
+    body: JSON.stringify({ confirmation, allow_internal: state.settings.allowInternalErase, method, compliance_profile: state.selectedComplianceProfile }),
   });
   state.currentJobId = payload.job_id;
   await refreshActiveJobs();
@@ -1085,8 +1123,17 @@ document.addEventListener("DOMContentLoaded", async () => {
     byId("jobStatus").textContent = `NVMe erase error · ${error.message}`;
     setControlsBusy();
   });
+  byId("nvmeSanitizeCryptoButton").onclick = () => nvmeEraseSelectedDisk("sanitize_crypto").catch((error) => {
+    byId("jobStatus").textContent = `NVMe sanitize crypto error · ${error.message}`;
+    setControlsBusy();
+  });
+  byId("nvmeSanitizeBlockButton").onclick = () => nvmeEraseSelectedDisk("sanitize_block").catch((error) => {
+    byId("jobStatus").textContent = `NVMe sanitize block error · ${error.message}`;
+    setControlsBusy();
+  });
   bindSettings();
   await loadComplianceProfiles();
+  await loadSystemTools();
   await refreshEnterpriseStatus();
   await refreshDisks();
   await refreshActiveJobs();

@@ -120,9 +120,11 @@ in {
     eject
     exfatprogs
     hdparm
+    lsscsi
     nvme-cli
     openbox
     parted
+    sg3_utils
     smartmontools
     udisks
     util-linux
@@ -144,8 +146,10 @@ in {
       eject
       exfatprogs
       hdparm
+      lsscsi
       nvme-cli
       parted
+      sg3_utils
       smartmontools
       udisks
       util-linux

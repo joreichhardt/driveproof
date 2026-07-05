@@ -98,7 +98,8 @@ Requirements:
 - `util-linux` for block-device helpers such as `lsblk`
 - `udisks2` for safe removal and removable media handling
 - `hdparm` for ATA Secure Erase and ATA Enhanced Secure Erase
-- `nvme-cli` for NVMe device information and future NVMe sanitize support
+- `nvme-cli` for NVMe device information, NVMe Format, and NVMe Sanitize
+- `lsscsi` and `sg3_utils` for SCSI/SAS/HBA diagnostics
 - `parted` and `dosfstools` for USB/export-partition workflows
 - `eject` for safe media handling
 - Chromium or Chrome for PDF export
@@ -110,7 +111,7 @@ python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 sudo apt update
-sudo apt install -y smartmontools udisks2 util-linux hdparm nvme-cli parted dosfstools eject chromium-browser
+sudo apt install -y smartmontools udisks2 util-linux hdparm nvme-cli lsscsi sg3-utils parted dosfstools eject chromium-browser
 ```
 
 On Debian or Ubuntu variants where `chromium-browser` is not available, install
@@ -164,12 +165,18 @@ export to the operating system.
 
 The following host tools are required for full functionality:
 
-- `smartctl` from `smartmontools`
-- `hdparm`
-- `nvme`
+- `smartctl` from `smartmontools` 7.4+
+- `hdparm` 9.65+
+- `nvme` from `nvme-cli` 2.8+
 - `lsblk` / `blockdev` from `util-linux`
-- `udisksctl` from `udisks2`
+- `udisksctl` from `udisks2` 2.10+
 - Chromium or Chrome for PDF export
+
+The NixOS live image uses the pinned package set from `flake.lock`, so tool
+versions are reproducible there. These minimum versions matter for local Linux
+execution and for the portable binary on an existing host. DriveProof also
+probes runtime capabilities because distributions may backport or patch CLI
+features independently from upstream version numbers.
 
 Build:
 
@@ -411,6 +418,9 @@ Available erase modes:
 - `ATA Enhanced Secure Erase`: firmware-based enhanced erase using
   `hdparm --security-erase-enhanced` only when the drive explicitly reports
   enhanced erase support
+- `NVMe Format Erase`: uses `nvme format --ses=1 --force`
+- `NVMe Sanitize Crypto`: uses `nvme sanitize --sanact=4`
+- `NVMe Sanitize Block`: uses `nvme sanitize --sanact=2`
 
 Drive type handling:
 - HDDs are detected and offered HDD-oriented read tests plus ATA firmware erase
@@ -418,8 +428,17 @@ Drive type handling:
 - SATA SSDs are detected and can use ATA Secure Erase when the firmware and
   controller expose the required ATA security commands.
 - NVMe drives are detected and tested with NVMe-aware health/SMART data.
-  `nvme-cli` is included in the live image; destructive NVMe Sanitize/Format is
-  intentionally not enabled yet in the public live client.
+  `nvme-cli` is included in the live image. Format and Sanitize methods are
+  offered only when the controller and CLI report the required capabilities.
+- SAS/SATA drives behind HBAs in IT/JBOD mode are expected to work through the
+  normal Linux block/SCSI stack when the kernel exposes the physical drives.
+  The live image includes `lsscsi` and `sg3_utils` for additional SCSI/SAS
+  diagnostics.
+- Hardware RAID controllers may expose only logical volumes. Physical-drive
+  SMART access behind MegaRAID, HP Smart Array, Areca, 3ware, and similar
+  controllers is controller-specific and may require explicit `smartctl -d ...`
+  parameters or vendor tools. DriveProof should mark unsupported RAID logical
+  volumes as limited evidence rather than pretending they are individual disks.
 
 Compliance/report profiles:
 - `Resale Basic`: SMART and read-test evidence for selling used drives
@@ -447,8 +466,7 @@ Important notes:
 - ATA Secure Erase support depends on the drive, controller, and USB/SATA adapter.
 - Many USB docks do not pass ATA security commands through.
 - SATA SSDs can use ATA Secure Erase when their firmware and adapter expose it.
-- NVMe drives are detected and tested. `nvme-cli` is included in the live image, but destructive NVMe Sanitize/Format execution is not enabled yet.
-- For NVMe resale workflows today, use SMART/NVMe health data plus read tests, or erase with a trusted external NVMe-specific tool before reporting.
+- NVMe drives are detected and tested. `nvme-cli` is included in the live image. NVMe Format and Sanitize are offered only when the controller reports the required capabilities.
 - DriveProof reports are resale evidence, not a replacement for a certified enterprise erasure platform such as Blancco unless your own process validates and accepts the workflow.
 - FAT32 itself is not tamper-proof. Integrity comes from the signed manifest and certificate, not from the filesystem.
 - The PDF file is not currently a native digitally signed PDF. Instead, the PDF is covered by the signed bundle manifest.

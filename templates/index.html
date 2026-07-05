@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>DriveProof</title>
     <link rel="icon" type="image/png" href="{{ url_for('static', filename='assets/driveproof-logo.png') }}">
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=20260705-erase2">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=20260705-nvme-sanitize1">
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   </head>
   <body data-page="{{ active_page or 'dashboard' }}">
@@ -56,6 +56,10 @@
               <button id="selectAllButton" class="mini-action" type="button">All visible</button>
               <button id="clearSelectionButton" class="mini-action" type="button">Clear</button>
             </div>
+          </div>
+          <div class="system-tools-card">
+            <div class="block-label">System tools</div>
+            <div id="systemToolsList" class="system-tools-list"></div>
           </div>
           <div class="enterprise-card" id="enterpriseCard">
             <div class="enterprise-head">
@@ -163,6 +167,8 @@
                     <button id="enhancedSecureEraseButton" class="erase-button secondary">ATA Enhanced Secure Erase</button>
                     <div id="nvmeEraseHint" class="muted">Checking NVMe erase support.</div>
                     <button id="nvmeEraseButton" class="erase-button secondary" disabled>NVMe Format Erase</button>
+                    <button id="nvmeSanitizeCryptoButton" class="erase-button secondary" disabled>NVMe Sanitize Crypto</button>
+                    <button id="nvmeSanitizeBlockButton" class="erase-button secondary" disabled>NVMe Sanitize Block</button>
                   </div>
                 </details>
                 <details class="tool-menu jobs-menu" open>
@@ -203,6 +209,6 @@
       </footer>
     </div>
 
-    <script src="{{ url_for('static', filename='app.js') }}?v=20260705-erase2"></script>
+    <script src="{{ url_for('static', filename='app.js') }}?v=20260705-nvme-sanitize1"></script>
   </body>
   </html>

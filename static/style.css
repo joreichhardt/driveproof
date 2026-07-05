@@ -396,6 +396,43 @@ h2 {
   text-align: center;
 }
 
+.system-tools-card {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+.system-tools-list {
+  display: grid;
+  gap: 8px;
+}
+
+.system-tool-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.system-tool-row div {
+  min-width: 0;
+}
+
+.system-tool-row strong,
+.system-tool-row span {
+  display: block;
+}
+
+.system-tool-row > div > span {
+  color: var(--muted);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
 body[data-page="dashboard"] .diagnostics-menu,
 body[data-page="dashboard"] .erase-menu,
 body[data-page="dashboard"] .compliance-menu,
