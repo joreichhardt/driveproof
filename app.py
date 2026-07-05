@@ -946,6 +946,29 @@ def render_report_pdf_to_path(report_id: str, pdf_path: Path) -> None:
         raise RuntimeError(err.strip() or out.strip() or "PDF export failed.")
 
 
+def render_report_run_pdf_to_path(run_id: str, pdf_path: Path) -> None:
+    pdf_engine = chrome_binary()
+    if not pdf_engine:
+        raise RuntimeError(f"No Chromium or Chrome binary found for PDF export. PATH={os.environ.get('PATH', '')}")
+
+    url = f"http://127.0.0.1:5055/report-run/{run_id}"
+    rc, out, err = run_command(
+        [
+            pdf_engine,
+            "--headless",
+            "--disable-gpu",
+            "--no-sandbox",
+            "--run-all-compositor-stages-before-draw",
+            "--virtual-time-budget=2000",
+            f"--print-to-pdf={pdf_path}",
+            url,
+        ],
+        timeout=240,
+    )
+    if rc != 0 or not pdf_path.exists():
+        raise RuntimeError(err.strip() or out.strip() or "Combined PDF export failed.")
+
+
 def list_printers() -> list[dict[str, Any]]:
     lpstat = tool_path("lpstat")
     if not lpstat:
@@ -997,6 +1020,41 @@ def print_report_pdf(report_id: str, printer: str | None = None) -> dict[str, An
             "message": (out.strip() or "Print job submitted."),
             "report_id": report_id,
         }
+    finally:
+        tmp_path.unlink(missing_ok=True)
+
+
+def submit_pdf_to_printer(pdf_path: Path, title: str, printer: str | None = None) -> dict[str, Any]:
+    lp = tool_path("lp")
+    if not lp:
+        raise RuntimeError("CUPS lp command is not available.")
+    printers = list_printers()
+    if not printers:
+        raise RuntimeError("No CUPS printers are configured or discovered.")
+    selected = printer or printers[0]["name"]
+    if selected not in {item["name"] for item in printers}:
+        raise RuntimeError(f"Unknown printer: {selected}")
+    rc, out, err = run_command([lp, "-d", selected, "-t", title, str(pdf_path)], timeout=60)
+    if rc != 0:
+        raise RuntimeError(err.strip() or out.strip() or "Print job failed.")
+    return {"status": "submitted", "printer": selected, "message": (out.strip() or "Print job submitted.")}
+
+
+def print_report_run(run_id: str, printer: str | None = None, combined: bool = True) -> dict[str, Any]:
+    reports = reports_for_run(run_id)
+    if not reports:
+        raise FileNotFoundError(run_id)
+    if not combined:
+        jobs = [print_report_pdf(report["report_id"], printer) for report in reports]
+        return {"status": "submitted", "mode": "individual", "run_id": run_id, "count": len(jobs), "jobs": jobs}
+
+    tmp = tempfile.NamedTemporaryFile(prefix=f"driveproof_run_{slugify_filename_part(run_id)}_", suffix=".pdf", delete=False)
+    tmp_path = Path(tmp.name)
+    tmp.close()
+    try:
+        render_report_run_pdf_to_path(run_id, tmp_path)
+        result = submit_pdf_to_printer(tmp_path, f"DriveProof run {run_id}", printer)
+        return {**result, "mode": "combined", "run_id": run_id, "count": len(reports)}
     finally:
         tmp_path.unlink(missing_ok=True)
 
@@ -2292,6 +2350,51 @@ def load_report(report_id: str) -> dict[str, Any]:
     return enriched
 
 
+def all_reports() -> list[dict[str, Any]]:
+    reports: list[dict[str, Any]] = []
+    for path in sorted(REPORT_DIR.glob("*.json"), reverse=True):
+        try:
+            reports.append(enrich_report(json.loads(path.read_text(encoding="utf-8"))))
+        except Exception:
+            continue
+    return reports
+
+
+def report_run_id(report: dict[str, Any]) -> str:
+    source = report.get("source_job") or {}
+    options = source.get("options") or {}
+    return str(options.get("run_id") or options.get("batch_id") or source.get("id") or report.get("report_id"))
+
+
+def reports_for_run(run_id: str) -> list[dict[str, Any]]:
+    reports = [report for report in all_reports() if report_run_id(report) == run_id]
+    return sorted(reports, key=lambda report: report.get("generated_at") or "")
+
+
+def report_runs() -> list[dict[str, Any]]:
+    groups: dict[str, list[dict[str, Any]]] = {}
+    for report in all_reports():
+        groups.setdefault(report_run_id(report), []).append(report)
+    runs = []
+    for run_id, reports in groups.items():
+        reports = sorted(reports, key=lambda report: report.get("generated_at") or "")
+        kinds = sorted({report.get("report_kind") or classify_report_kind(report) for report in reports})
+        devices = sorted({(report.get("device") or {}).get("path") or "unknown" for report in reports})
+        runs.append(
+            {
+                "run_id": run_id,
+                "generated_at": reports[0].get("generated_at"),
+                "completed_at": reports[-1].get("generated_at"),
+                "count": len(reports),
+                "report_ids": [report["report_id"] for report in reports],
+                "report_kinds": kinds,
+                "devices": devices,
+                "device_count": len(devices),
+            }
+        )
+    return sorted(runs, key=lambda run: run.get("completed_at") or "", reverse=True)
+
+
 def delete_report(report_id: str) -> None:
     path = report_file_path(report_id)
     if not path.exists():
@@ -3095,6 +3198,14 @@ def report_view(report_id: str) -> str:
     return render_template("report.html", report=report, github_qr_svg=github_qr_inline_svg())
 
 
+@app.route("/report-run/<run_id>")
+def report_run_view(run_id: str) -> str:
+    reports = reports_for_run(run_id)
+    if not reports:
+        abort(404)
+    return render_template("combined_reports.html", run_id=run_id, reports=reports, github_qr_svg=github_qr_inline_svg())
+
+
 @app.route("/certificate/<report_id>")
 def certificate_view(report_id: str) -> str:
     try:
@@ -3155,6 +3266,25 @@ def report_pdf_download(report_id: str):
     tmp.close()
     try:
         render_report_pdf_to_path(report_id, tmp_path)
+    except Exception as exc:
+        tmp_path.unlink(missing_ok=True)
+        return jsonify({"error": str(exc)}), 500
+
+    data = tmp_path.read_bytes()
+    tmp_path.unlink(missing_ok=True)
+    return send_file(BytesIO(data), as_attachment=True, download_name=f"{base_name}.pdf", mimetype="application/pdf")
+
+
+@app.get("/report-run/<run_id>/pdf")
+def report_run_pdf_download(run_id: str):
+    if not reports_for_run(run_id):
+        abort(404)
+    base_name = f"driveproof_run_{slugify_filename_part(run_id)}"
+    tmp = tempfile.NamedTemporaryFile(prefix=f"{base_name}_", suffix=".pdf", delete=False)
+    tmp_path = Path(tmp.name)
+    tmp.close()
+    try:
+        render_report_run_pdf_to_path(run_id, tmp_path)
     except Exception as exc:
         tmp_path.unlink(missing_ok=True)
         return jsonify({"error": str(exc)}), 500
@@ -3227,6 +3357,7 @@ def api_tests():
     device = payload.get("device")
     mode = payload.get("mode", "quick")
     compliance_profile = payload.get("compliance_profile") or "resale_basic"
+    run_id = (payload.get("run_id") or "").strip() or None
     allowed_modes = {"quick", "deep_sample", "smart_short", "smart_extended", "full"}
     if not device:
         return jsonify({"error": "device is required"}), 400
@@ -3239,7 +3370,7 @@ def api_tests():
     if selftest.get("running") and mode in {"smart_short", "smart_extended"}:
         return jsonify({"error": "A SMART self-test is already running on this drive."}), 409
 
-    job_id = start_test_job(device, mode, {"compliance_profile": compliance_profile})
+    job_id = start_test_job(device, mode, {"compliance_profile": compliance_profile, "run_id": run_id})
     return jsonify({"job_id": job_id})
 
 
@@ -3257,6 +3388,7 @@ def api_erase_disk(device_name: str):
     payload = request.get_json(silent=True) or {}
     allow_internal = bool(payload.get("allow_internal"))
     compliance_profile = payload.get("compliance_profile") or "nist_clear"
+    run_id = (payload.get("run_id") or "").strip() or None
     post_test_mode = (payload.get("post_test_mode") or "").strip() or None
     if post_test_mode and post_test_mode not in {"quick", "deep_sample", "smart_short", "smart_extended", "full"}:
         return jsonify({"error": "post_test_mode must be quick, deep_sample, smart_short, smart_extended, or full"}), 400
@@ -3267,7 +3399,7 @@ def api_erase_disk(device_name: str):
         job_id = start_job(
             device_name,
             "erase_zero",
-            {"allow_internal_erase": allow_internal, "compliance_profile": compliance_profile, "post_test_mode": post_test_mode},
+            {"allow_internal_erase": allow_internal, "compliance_profile": compliance_profile, "post_test_mode": post_test_mode, "run_id": run_id},
         )
         return jsonify({"job_id": job_id})
     except Exception as exc:
@@ -3280,6 +3412,7 @@ def api_secure_erase_disk(device_name: str):
     allow_internal = bool(payload.get("allow_internal"))
     method = (payload.get("method") or "basic").strip().lower()
     compliance_profile = payload.get("compliance_profile") or ("nist_purge" if method == "enhanced" else "nist_clear")
+    run_id = (payload.get("run_id") or "").strip() or None
     post_test_mode = (payload.get("post_test_mode") or "").strip() or None
     if post_test_mode and post_test_mode not in {"quick", "deep_sample", "smart_short", "smart_extended", "full"}:
         return jsonify({"error": "post_test_mode must be quick, deep_sample, smart_short, smart_extended, or full"}), 400
@@ -3304,6 +3437,7 @@ def api_secure_erase_disk(device_name: str):
                 "secure_erase_method": method,
                 "compliance_profile": compliance_profile,
                 "post_test_mode": post_test_mode,
+                "run_id": run_id,
             },
         )
         return jsonify({"job_id": job_id})
@@ -3317,6 +3451,7 @@ def api_nvme_erase_disk(device_name: str):
     allow_internal = bool(payload.get("allow_internal"))
     method = (payload.get("method") or "format").strip().lower()
     compliance_profile = payload.get("compliance_profile") or "nist_purge"
+    run_id = (payload.get("run_id") or "").strip() or None
     post_test_mode = (payload.get("post_test_mode") or "").strip() or None
     if post_test_mode and post_test_mode not in {"quick", "deep_sample", "smart_short", "smart_extended", "full"}:
         return jsonify({"error": "post_test_mode must be quick, deep_sample, smart_short, smart_extended, or full"}), 400
@@ -3346,6 +3481,7 @@ def api_nvme_erase_disk(device_name: str):
                 "nvme_erase_method": method,
                 "compliance_profile": compliance_profile,
                 "post_test_mode": post_test_mode,
+                "run_id": run_id,
             },
         )
         return jsonify({"job_id": job_id})
@@ -3382,13 +3518,13 @@ def api_job_status(job_id: str):
 def api_reports():
     import_exported_reports()
     reports = []
-    for path in sorted(REPORT_DIR.glob("*.json"), reverse=True):
+    for payload in all_reports():
         try:
-            payload = json.loads(path.read_text(encoding="utf-8"))
             reports.append(
                 {
                     "report_id": payload["report_id"],
                     "generated_at": payload["generated_at"],
+                    "run_id": report_run_id(payload),
                     "report_kind": classify_report_kind(payload),
                     "report_kind_label": report_kind_label(classify_report_kind(payload)),
                     "device": payload["device"],
@@ -3399,7 +3535,7 @@ def api_reports():
             )
         except Exception:
             continue
-    return jsonify({"reports": reports})
+    return jsonify({"reports": reports, "runs": report_runs()})
 
 
 @app.get("/api/export-targets")
@@ -3499,6 +3635,19 @@ def api_print_report(report_id: str):
         return jsonify(print_report_pdf(report_id, printer))
     except FileNotFoundError as exc:
         return jsonify({"error": str(exc)}), 404
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 500
+
+
+@app.post("/api/report-runs/<run_id>/print")
+def api_print_report_run(run_id: str):
+    payload = request.get_json(silent=True) or {}
+    printer = (payload.get("printer") or "").strip() or None
+    combined = payload.get("mode", "combined") != "individual"
+    try:
+        return jsonify(print_report_run(run_id, printer=printer, combined=combined))
+    except FileNotFoundError:
+        return jsonify({"error": "Report run not found"}), 404
     except Exception as exc:
         return jsonify({"error": str(exc)}), 500
 

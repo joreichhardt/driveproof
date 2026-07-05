@@ -113,6 +113,10 @@ function openDevice(name) {
   window.location.href = `/device/${encodeURIComponent(name)}`;
 }
 
+function newRunId(prefix = "run") {
+  return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
 function resolvedTheme(mode) {
   if (mode === "dark" || mode === "light") return mode;
   return window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
@@ -470,6 +474,26 @@ async function printReport(reportId) {
     body: JSON.stringify({ printer: selected }),
   });
   window.alert(result.message || `Print job submitted to ${selected}.`);
+}
+
+async function printReportRun(runId, mode = "combined") {
+  const payload = await fetchJson("/api/printers");
+  const printers = payload.printers || [];
+  if (!printers.length) {
+    window.alert("No CUPS printers found. Configure an IPP/AirPrint or USB printer first.");
+    return;
+  }
+  const names = printers.map((printer) => printer.name);
+  const selected = names.length === 1
+    ? names[0]
+    : window.prompt(`Printer name:\n${names.join("\n")}`, names[0]);
+  if (!selected) return;
+  const result = await fetchJson(`/api/report-runs/${encodeURIComponent(runId)}/print`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ printer: selected, mode }),
+  });
+  window.alert(result.message || `Submitted ${result.count || 0} report(s) to ${selected}.`);
 }
 
 async function loadSelectedDiskJobs() {
@@ -943,6 +967,43 @@ async function loadReports() {
     return;
   }
 
+  const runs = payload.runs || [];
+  if (runs.length) {
+    const runSection = document.createElement("section");
+    runSection.className = "report-group";
+    runSection.innerHTML = `
+      <div class="report-group-head">
+        <h3>Report runs</h3>
+        <span class="badge">${runs.length}</span>
+      </div>
+    `;
+    for (const run of runs) {
+      const item = document.createElement("div");
+      item.className = "report-item";
+      item.innerHTML = `
+        <div class="report-link">
+          <span class="report-kind-pill test">${escapeHtml(run.count)} report${run.count === 1 ? "" : "s"}</span>
+          ${escapeHtml(run.devices.join(", "))} · ${escapeHtml(run.report_kinds.join(" + "))} · ${new Date(run.completed_at || run.generated_at).toLocaleString()}
+        </div>
+        <div class="report-export-status">
+          Run ${escapeHtml(run.run_id)} · ${run.device_count} drive${run.device_count === 1 ? "" : "s"}
+        </div>
+        <div class="report-actions-inline">
+          <a class="mini-action" href="/report-run/${encodeURIComponent(run.run_id)}">Open combined</a>
+          <a class="mini-action" href="/report-run/${encodeURIComponent(run.run_id)}/pdf">Combined PDF</a>
+          <button class="mini-action" type="button" data-action="print-combined">Print combined</button>
+          <button class="mini-action" type="button" data-action="print-individual">Print individual</button>
+        </div>
+      `;
+      item.querySelector('[data-action="print-combined"]').onclick = () => printReportRun(run.run_id, "combined")
+        .catch((error) => window.alert(`print error: ${error.message}`));
+      item.querySelector('[data-action="print-individual"]').onclick = () => printReportRun(run.run_id, "individual")
+        .catch((error) => window.alert(`print error: ${error.message}`));
+      runSection.appendChild(item);
+    }
+    container.appendChild(runSection);
+  }
+
   const groups = [
     { id: "test", label: "Test Reports" },
     { id: "erase", label: "Erase Reports" },
@@ -1203,6 +1264,7 @@ async function startTest() {
     setOperationStatus("No selectable drives without an active app job.");
     return;
   }
+  const runId = targets.length > 1 ? newRunId("batch-test") : newRunId("test");
 
   const started = [];
   const failed = [];
@@ -1211,7 +1273,7 @@ async function startTest() {
       const payload = await fetchJson("/api/tests", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ device: disk.name, mode: state.selectedMode, compliance_profile: state.selectedComplianceProfile }),
+        body: JSON.stringify({ device: disk.name, mode: state.selectedMode, compliance_profile: state.selectedComplianceProfile, run_id: runId }),
       });
       started.push({ disk, jobId: payload.job_id });
     } catch (error) {
@@ -1315,6 +1377,7 @@ async function eraseSelectedDisk() {
     setOperationStatus("No selectable drives without an active app job.");
     return;
   }
+  const runId = targets.length > 1 ? newRunId("batch-erase") : newRunId("erase");
   const started = [];
   const failed = [];
   for (const disk of targets) {
@@ -1322,7 +1385,7 @@ async function eraseSelectedDisk() {
       const payload = await fetchJson(`/api/disks/${disk.name}/erase`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ allow_internal: state.settings.allowInternalErase, compliance_profile: state.selectedComplianceProfile, ...postErasePayload() }),
+        body: JSON.stringify({ allow_internal: state.settings.allowInternalErase, compliance_profile: state.selectedComplianceProfile, run_id: runId, ...postErasePayload() }),
       });
       started.push({ disk, jobId: payload.job_id });
     } catch (error) {
@@ -1342,6 +1405,7 @@ async function secureEraseSelectedDisk(method = "basic") {
     setOperationStatus("No selectable drives without an active app job.");
     return;
   }
+  const runId = targets.length > 1 ? newRunId("batch-erase") : newRunId("erase");
   const started = [];
   const failed = [];
   for (const disk of targets) {
@@ -1349,7 +1413,7 @@ async function secureEraseSelectedDisk(method = "basic") {
       const payload = await fetchJson(`/api/disks/${disk.name}/secure-erase`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ allow_internal: state.settings.allowInternalErase, method, compliance_profile: state.selectedComplianceProfile, ...postErasePayload() }),
+        body: JSON.stringify({ allow_internal: state.settings.allowInternalErase, method, compliance_profile: state.selectedComplianceProfile, run_id: runId, ...postErasePayload() }),
       });
       started.push({ disk, jobId: payload.job_id });
     } catch (error) {
@@ -1369,6 +1433,7 @@ async function nvmeEraseSelectedDisk(method = "format") {
     setOperationStatus("No selectable drives without an active app job.");
     return;
   }
+  const runId = targets.length > 1 ? newRunId("batch-erase") : newRunId("erase");
   const started = [];
   const failed = [];
   for (const disk of targets) {
@@ -1376,7 +1441,7 @@ async function nvmeEraseSelectedDisk(method = "format") {
       const payload = await fetchJson(`/api/disks/${disk.name}/nvme-erase`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ allow_internal: state.settings.allowInternalErase, method, compliance_profile: state.selectedComplianceProfile, ...postErasePayload() }),
+        body: JSON.stringify({ allow_internal: state.settings.allowInternalErase, method, compliance_profile: state.selectedComplianceProfile, run_id: runId, ...postErasePayload() }),
       });
       started.push({ disk, jobId: payload.job_id });
     } catch (error) {

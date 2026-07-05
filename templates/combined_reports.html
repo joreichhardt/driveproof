@@ -1,0 +1,184 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>DriveProof Run {{ run_id }}</title>
+    <link rel="icon" type="image/png" href="{{ url_for('static', filename='assets/driveproof-logo.png') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=20260705-run-pdf2">
+  </head>
+  <body class="report-body">
+    <main class="report-page combined-run-cover">
+      <header class="report-sheet-header">
+        <div class="report-brand-block">
+          <img class="report-logo" src="{{ url_for('static', filename='assets/driveproof-logo.png') }}" alt="DriveProof logo">
+          <div>
+            <p class="eyebrow">DriveProof Combined PDF</p>
+            <h1>{{ reports|length }} individual report{{ '' if reports|length == 1 else 's' }}</h1>
+            <p class="muted">Run {{ run_id }}</p>
+          </div>
+        </div>
+        <div class="report-actions">
+          <a class="icon-button legal-back-link" href="/reports">Back to reports</a>
+          <a class="icon-button legal-back-link" href="/report-run/{{ run_id }}/pdf">Download combined PDF</a>
+        </div>
+      </header>
+      <section class="panel inset">
+        <h2>Included reports</h2>
+        <div class="reports-list">
+          {% for report in reports %}
+          <div class="report-link">
+            {{ report.device.path }} | {{ report.device.vendor }} {{ report.device.model }} | Serial {{ report.overview.serial }} | {{ report.report_kind_label }} | {{ report.report_id }}
+          </div>
+          {% endfor %}
+        </div>
+      </section>
+    </main>
+
+    {% for report in reports %}
+    <main class="report-page report-page-a4 combined-single-report">
+      <header class="report-sheet-header">
+        <div class="report-brand-block">
+          <img class="report-logo" src="{{ url_for('static', filename='assets/driveproof-logo.png') }}" alt="DriveProof logo">
+          <div>
+            <p class="eyebrow">{{ report.report_kind_label or 'Drive Health Report' }}</p>
+            <h1>{{ report.device.vendor }} {{ report.device.model }}</h1>
+            <p class="muted">{{ report.device.path }} | Serial {{ report.overview.serial }}</p>
+          </div>
+        </div>
+        <div class="report-proof-block">
+          <div class="report-qr" aria-label="GitHub repository QR code">{{ github_qr_svg }}</div>
+          <div>
+            <strong>Created with DriveProof</strong>
+            <span>github.com/joreichhardt/driveproof</span>
+          </div>
+        </div>
+        <div class="report-actions">
+          <a class="icon-button legal-back-link" href="/report/{{ report.report_id }}">Open report</a>
+          {% if report.report_kind == 'erase' %}
+          <a class="icon-button legal-back-link" href="/certificate/{{ report.report_id }}">Certificate</a>
+          {% endif %}
+        </div>
+      </header>
+
+      <section class="report-diagnostic report-diagnostic-compact">
+        <div class="report-health-box">
+          <div class="report-health-label">Health Status</div>
+          <div class="report-health-grade">{{ report.health.grade }}</div>
+          <div class="report-health-score">{{ report.health.score }}/100</div>
+        </div>
+        <div class="report-temp-box">
+          <div class="report-health-label">Temperature</div>
+          <div class="report-temp-value">{{ report.overview.temperature_c }}</div>
+        </div>
+      </section>
+
+      <section class="panel inset report-summary-panel report-compact-panel">
+        <h2>{{ 'Erasure summary' if report.report_kind == 'erase' else 'Resale test summary' }}</h2>
+        <div class="summary-item"><span>Assessment</span><strong>{{ report.sales_summary.verdict if report.sales_summary else report.health.summary }}</strong></div>
+        <div class="summary-item"><span>Evidence</span><strong>{{ report.test.label if report.test.label else report.test.type }}</strong></div>
+        <p class="muted">{{ report.sales_summary.test_claim if report.sales_summary else '' }}</p>
+      </section>
+
+      <section class="panel inset report-summary-panel report-compact-panel">
+        <h2>Compliance proof</h2>
+        <div class="report-summary-grid">
+          <div class="summary-item"><span>Profile</span><strong>{{ report.compliance.label if report.compliance else 'Resale Basic' }}</strong></div>
+          <div class="summary-item"><span>Standard</span><strong>{{ report.compliance.standard if report.compliance else 'DriveProof resale workflow' }}</strong></div>
+          <div class="summary-item wide"><span>Report SHA-256</span><strong class="hash-value">{{ report.integrity.sha256 if report.integrity else 'n/a' }}</strong></div>
+        </div>
+      </section>
+
+      <section class="panel inset report-summary-panel report-compact-panel">
+        <h2>Key used-drive data</h2>
+        <div class="report-summary-grid">
+          <div class="summary-item"><span>Power-on hours</span><strong>{{ report.overview.power_on_hours }} h</strong></div>
+          <div class="summary-item"><span>Start/Stop</span><strong>{{ report.overview.start_stop_count }}</strong></div>
+          <div class="summary-item"><span>Reallocated Sectors</span><strong>{{ report.overview.reallocated }}</strong></div>
+          <div class="summary-item"><span>Pending Sectors</span><strong>{{ report.overview.pending }}</strong></div>
+          <div class="summary-item"><span>Offline Uncorrectable</span><strong>{{ report.overview.offline_uncorrectable }}</strong></div>
+          <div class="summary-item"><span>Temperature</span><strong>{{ report.overview.temperature_c }}</strong></div>
+          <div class="summary-item"><span>CRC Errors</span><strong>{{ report.overview.crc_errors }}</strong></div>
+          <div class="summary-item"><span>Read Test</span><strong>{% if report.test.average_throughput_mib_s %}{{ report.test.average_throughput_mib_s }} MiB/s{% else %}Not applicable{% endif %}</strong></div>
+        </div>
+      </section>
+
+      <section class="report-spec-grid report-spec-grid-compact">
+        <div class="report-spec"><span>Model</span><strong>{{ report.device.model or 'n/a' }}</strong></div>
+        <div class="report-spec"><span>Report Type</span><strong>{{ report.report_kind_label or 'Test Report' }}</strong></div>
+        <div class="report-spec"><span>Firmware</span><strong>{{ report.smart.payload.firmware_version if report.smart.payload else 'n/a' }}</strong></div>
+        <div class="report-spec"><span>Capacity</span><strong>{{ report.overview.capacity_gb }} GB</strong></div>
+        <div class="report-spec"><span>Interface</span><strong>{{ report.overview.interface }}</strong></div>
+        <div class="report-spec"><span>Power-On Hours</span><strong>{{ report.overview.power_on_hours }}</strong></div>
+        <div class="report-spec"><span>Power Cycles</span><strong>{{ report.smart.payload.power_cycle_count if report.smart.payload else 'n/a' }}</strong></div>
+        <div class="report-spec"><span>Test Type</span><strong>{{ report.test.label if report.test.label else report.test.type }}</strong></div>
+        <div class="report-spec"><span>Created</span><strong>{{ report.generated_at }}</strong></div>
+      </section>
+
+      <section class="report-grid report-grid-compact report-narrative">
+        <article class="panel inset">
+          <h2>Assessment</h2>
+          <p>{{ report.health.summary }}</p>
+          <ul class="notes">
+            {% for note in report.health.notes %}
+            <li>{{ note }}</li>
+            {% endfor %}
+          </ul>
+        </article>
+        <article class="panel inset">
+          <h2>Read Test</h2>
+          <p>{{ report.test.buyer_claim if report.test.buyer_claim else '' }}</p>
+          {% if report.test.average_throughput_mib_s %}<p>Average Throughput: {{ report.test.average_throughput_mib_s }} MiB/s</p>{% endif %}
+          {% if report.test.duration_s %}<p>Duration: {{ report.test.duration_s }} s</p>{% endif %}
+          {% if report.test.self_test_status %}<p>Self-Test Status: {{ report.test.self_test_status }}</p>{% endif %}
+          {% if report.test.bytes_read %}<p>Bytes Read: {{ report.test.bytes_read }}</p>{% endif %}
+          {% if report.test.segments %}<p>Segments Tested: {{ report.test.segments|length }}</p>{% endif %}
+          {% if report.test.erasure %}
+          <p>Erase Method: {{ report.test.erasure.method }}</p>
+          {% if report.test.erasure.coverage %}<p>Erase Coverage: {{ report.test.erasure.coverage }}</p>{% endif %}
+          {% if report.test.erasure.observability %}<p>Erase Observability: {{ report.test.erasure.observability }}</p>{% endif %}
+          {% if report.test.erasure.implausibly_fast_warning %}<p>Warning: {{ report.test.erasure.implausibly_fast_warning }}</p>{% endif %}
+          <p>Erase Verification: {{ report.test.erasure.verification }}</p>
+          {% if report.test.erasure.verification_result %}
+          <p>Verification Result: {{ report.test.erasure.verification_result.statement }}</p>
+          <p>Samples Checked: {{ report.test.erasure.verification_result.sample_count }}</p>
+          {% endif %}
+          {% endif %}
+        </article>
+        <article class="panel inset">
+          <h2>Audit Trail</h2>
+          <ul class="notes">
+            {% for event in report.audit or [] %}
+            <li>{{ event.timestamp }} - {{ event.action }}</li>
+            {% endfor %}
+          </ul>
+        </article>
+      </section>
+
+      <section class="panel inset report-smart-panel">
+        <h2>Key SMART Attributes</h2>
+        <div class="smart-table smart-table-full report-smart-table">
+          <div class="smart-header"><span></span><span>ID</span><span>Attribute</span><span>Current</span><span>Worst</span><span>Thresh</span><span>Value</span></div>
+          {% for row in report.smart_rows %}
+          {% if row.name in ['Reallocated_Sector_Ct', 'Current_Pending_Sector', 'Offline_Uncorrectable', 'UDMA_CRC_Error_Count', 'Power_On_Hours', 'Temperature_Celsius', 'Media_Errors', 'Unsafe_Shutdowns', 'Percentage_Used'] %}
+          <div class="smart-row full">
+            <span class="row-indicator {{ row.severity }}"></span>
+            <span>{{ row.id }}</span>
+            <span>{{ row.label }}</span>
+            <span>{{ row.value }}</span>
+            <span>{{ row.worst }}</span>
+            <span>{{ row.thresh }}</span>
+            <span>{{ row.human }} <span class="smart-raw">({{ row.raw }})</span></span>
+          </div>
+          {% endif %}
+          {% endfor %}
+        </div>
+      </section>
+      <footer class="app-footer report-footer">
+        <a href="/legal/license">License</a>
+        <a href="/legal/third-party">Third-Party Licenses</a>
+      </footer>
+    </main>
+    {% endfor %}
+  </body>
+</html>

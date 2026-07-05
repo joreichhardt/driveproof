@@ -1559,6 +1559,25 @@ body[data-page="settings"] .settings-section {
   color: #51627b;
 }
 
+.combined-report-page {
+  display: grid;
+  gap: 14px;
+}
+
+.combined-single-report {
+  break-after: page;
+}
+
+@media print {
+  .combined-run-cover {
+    display: none;
+  }
+
+  .combined-single-report:last-child {
+    break-after: auto;
+  }
+}
+
 .tool-menu {
   border: 1px solid var(--line);
   border-radius: 8px;
