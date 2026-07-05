@@ -12,23 +12,16 @@ The focus is not just SMART visibility, but a credible resale workflow:
 - generate resale-friendly reports
 - boot directly from a NixOS live USB in kiosk mode
 
-## Editions
+## Project Scope
 
-DriveProof is split into a public live client and planned commercial Enterprise
-components:
+DriveProof is an open-source live diagnostics and erase environment for local
+drive resale workflows. The public repository contains the NixOS live image,
+local web UI, diagnostics, erase workflows, reports, certificates, and signed
+export bundles.
 
-- `DriveProof Live`: open-source NixOS live image, local web UI, diagnostics,
-  erase workflows, reports, certificates, and signed export bundles.
-- `DriveProof Enterprise Server`: planned closed-source management portal for
-  central report storage, fleet visibility, remote orchestration, user login,
-  audit workflows, and network configuration.
-- `DriveProof License Server`: planned closed-source licensing and entitlement
-  service for Enterprise features.
-
-The live image works fully in standalone mode. Enterprise features stay disabled
-automatically unless a licensed Enterprise Server is discovered on the network.
-See [docs/enterprise-server.md](docs/enterprise-server.md) for the public
-integration contract and product split.
+Commercial help can be offered around custom branding, build service, hardware
+validation, deployment media, and support. See
+[COMMERCIAL_SERVICES.md](COMMERCIAL_SERVICES.md).
 
 ## Download Live Image
 
@@ -560,51 +553,20 @@ Important notes:
 - Many USB docks do not pass ATA security commands through.
 - SATA SSDs can use ATA Secure Erase when their firmware and adapter expose it.
 - NVMe drives are detected and tested. `nvme-cli` is included in the live image. NVMe Format and Sanitize are offered only when the controller reports the required capabilities.
-- DriveProof reports are resale evidence, not a replacement for a certified enterprise erasure platform such as Blancco unless your own process validates and accepts the workflow.
+- DriveProof reports are resale evidence, not a replacement for a certified erasure platform such as Blancco unless your own process validates and accepts the workflow.
 - FAT32 itself is not tamper-proof. Integrity comes from the signed manifest and certificate, not from the filesystem.
 - The PDF file is not currently a native digitally signed PDF. Instead, the PDF is covered by the signed bundle manifest.
 - Cloud verification, key custody policies, and third-party accreditation are future steps.
 
-## Enterprise Server Roadmap
+## Commercial Services
 
-To compete more directly with enterprise tools, DriveProof should have a
-separate server application in addition to the live boot image.
+DriveProof can be used commercially under its open-source license. Commercial
+services can include custom branding, customer-specific NixOS images, validated
+USB/SATA/NVMe hardware setups, prepared boot media, and paid support.
 
-The DriveProof live image remains open source. The Enterprise Server, Management
-Portal, and License Server are planned as closed-source commercial components.
-This repository only contains the live client and public integration boundary.
-
-Standalone live boot behavior:
-- networking uses DHCP by default
-- static IP, gateway, and DNS can be configured locally through `/settings`
-  and are stored on the `DRVPROOF` FAT32 partition
-- if no licensed Enterprise Server is discovered, Enterprise features stay
-  disabled automatically
-- destructive remote erase is disabled in the open-source live client
-
-Recommended server components:
-- central report and certificate storage
-- upload endpoint for live systems
-- OIDC login for Google Workspace, Microsoft Entra ID, Keycloak, Authentik, etc.
-- LDAP/Active Directory login for on-premise workshops
-- role model: operator, supervisor, auditor, admin
-- immutable report store with append-only audit events
-- server-side public-key verification of every uploaded bundle
-- web UI for search by serial, model, asset ID, operator, customer, and date
-- API for exporting reports and certificates
-- optional PXE/netboot profile management later
-- license server for subscriptions, feature entitlements, offline licenses, and
-  activation/revocation
-
-This mirrors the market direction of enterprise products. Blancco offers
-centralized management/reporting through Management Portal and Management Portal
-On-Premise, including report/certificate management and integrations such as
-Active Directory/LDAP or SAML depending on product variant. KillDisk Industrial
-documents configurable XML report locations, including mapped network resources,
-and certificate/report workflows.
-
-See [docs/enterprise-server.md](docs/enterprise-server.md) for the public
-integration and product split.
+DriveProof reports are intended as practical resale evidence. They are not a
+substitute for a certified erasure process unless your own organization validates
+and accepts the workflow.
 
 ## Create a Bootable USB Stick
 

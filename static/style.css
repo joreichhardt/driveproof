@@ -218,7 +218,7 @@ body[data-theme="light"] {
   padding: 22px;
 }
 
-.enterprise-card {
+.service-card {
   margin: 16px 0 18px;
   padding: 16px;
   border: 1px solid var(--line);
@@ -226,15 +226,15 @@ body[data-theme="light"] {
   background: var(--panel-soft);
 }
 
-.enterprise-card[data-state="connected"] {
+.service-card[data-state="connected"] {
   border-color: rgba(52, 211, 153, 0.42);
 }
 
-.enterprise-card[data-state="available"] {
+.service-card[data-state="available"] {
   border-color: rgba(251, 191, 36, 0.46);
 }
 
-.enterprise-head {
+.service-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -242,7 +242,7 @@ body[data-theme="light"] {
   margin-bottom: 10px;
 }
 
-.enterprise-head h3 {
+.service-head h3 {
   margin: 0;
   font-size: 16px;
 }

@@ -16,7 +16,7 @@ const state = {
   nvmeErase: null,
   selftest: null,
   themeMode: "system",
-  enterprise: null,
+  serviceStatus: null,
   settings: {
     showInternalDisks: true,
     enableDestructive: false,
@@ -463,19 +463,19 @@ async function fetchJson(url, options = {}) {
   return payload;
 }
 
-async function refreshEnterpriseStatus(force = false) {
+async function refreshServiceStatus(force = false) {
   const suffix = force ? "?refresh=1" : "";
-  state.enterprise = await fetchJson(`/api/enterprise/status${suffix}`);
-  renderEnterpriseStatus();
+  state.serviceStatus = await fetchJson(`/api/service/status${suffix}`);
+  renderServiceStatus();
 }
 
-function renderEnterpriseStatus() {
-  const status = state.enterprise;
-  const card = byId("enterpriseCard");
+function renderServiceStatus() {
+  const status = state.serviceStatus;
+  const card = byId("serviceCard");
   if (!card || !status) return;
   const title = card.querySelector("h3");
-  const badge = byId("enterpriseBadge");
-  const reason = byId("enterpriseReason");
+  const badge = byId("serviceBadge");
+  const reason = byId("serviceReason");
   const networkMode = byId("networkMode");
   const networkAddresses = byId("networkAddresses");
   const networkConfigButton = byId("networkConfigButton");
@@ -484,20 +484,20 @@ function renderEnterpriseStatus() {
   const topbarNetworkAddress = byId("topbarNetworkAddress");
   const stateLabel = {
     disabled: "Local mode",
-    available: "Server available",
+    available: "Service available",
     connected: "Connected",
   }[status.state] || "Local mode";
   const badgeLabel = {
-    disabled: "Disabled",
-    available: "Licensed",
+    disabled: "Local",
+    available: "Available",
     connected: "Connected",
-  }[status.state] || "Disabled";
+  }[status.state] || "Local";
 
   card.dataset.state = status.state || "disabled";
   title.textContent = stateLabel;
   badge.textContent = badgeLabel;
   badge.classList.toggle("muted-badge", status.state === "disabled");
-  reason.textContent = status.reason || "Enterprise features are unavailable.";
+  reason.textContent = status.reason || "No optional network service configured.";
 
   const network = status.network || {};
   const modeLabel = `${String(network.mode || "dhcp").toUpperCase()} default`;
@@ -1399,7 +1399,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   byId("themeDark").onclick = () => applyTheme("dark");
   byId("themeLight").onclick = () => applyTheme("light");
   byId("refreshButton").onclick = async () => {
-    await refreshEnterpriseStatus(true);
+    await refreshServiceStatus(true);
     await loadNetworkConfig();
     await loadSystemTools();
     await loadVendorTools();
@@ -1459,7 +1459,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   await loadNetworkConfig();
   await loadSystemTools();
   await loadVendorTools();
-  await refreshEnterpriseStatus();
+  await refreshServiceStatus();
   await refreshDisks();
   await refreshActiveJobs();
 });

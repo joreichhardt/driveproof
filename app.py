@@ -11,8 +11,6 @@ import tempfile
 import threading
 import time
 import uuid
-import urllib.error
-import urllib.request
 from io import BytesIO
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
@@ -95,18 +93,6 @@ VENDOR_TOOL_CATALOG = {
     },
 }
 GITHUB_QR_PATH = BASE_DIR / "static" / "assets" / "github-qr.svg"
-PORTAL_URL = os.environ.get("DRIVEPROOF_PORTAL_URL", "").rstrip("/")
-PORTAL_TOKEN = os.environ.get("DRIVEPROOF_PORTAL_TOKEN", "")
-PORTAL_DISCOVERY_HOSTS = [
-    host.strip()
-    for host in os.environ.get(
-        "DRIVEPROOF_PORTAL_DISCOVERY_HOSTS",
-        "http://driveproof-portal.local:6060,http://driveproof-portal:6060,http://driveproof-enterprise.local:6060",
-    ).split(",")
-    if host.strip()
-]
-INSTANCE_ID_PATH = STATE_DIR / "instance-id"
-INSTANCE_NAME = os.environ.get("DRIVEPROOF_INSTANCE_NAME", "driveproof-live")
 
 COMPLIANCE_PROFILES = {
     "resale_basic": {
@@ -1158,125 +1144,6 @@ def verify_export_bundle(bundle_path: str) -> dict[str, Any]:
     }
 
 
-portal_discovery_cache: dict[str, Any] = {"checked_at": 0.0, "url": None, "error": None, "last_error": None, "server": None}
-portal_discovery_lock = threading.Lock()
-portal_discovery_in_progress = False
-
-
-def check_portal_health(url: str, timeout: float = 0.75) -> tuple[bool, dict[str, Any] | None, str | None]:
-    try:
-        req = urllib.request.Request(f"{url.rstrip('/')}/api/v1/discovery", method="GET")
-        with urllib.request.urlopen(req, timeout=timeout) as response:
-            if not 200 <= response.status < 300:
-                return False, None, f"discovery returned HTTP {response.status}"
-            body = response.read().decode("utf-8")
-        payload = json.loads(body) if body else {}
-    except Exception as exc:
-        return False, None, str(exc)
-
-    license_info = payload.get("license") or {}
-    if payload.get("product") != "DriveProof Enterprise Server":
-        return False, payload, "endpoint is not a DriveProof Enterprise Server"
-    if not payload.get("enterprise_enabled"):
-        return False, payload, "enterprise mode is disabled on the server"
-    if payload.get("advertise") is False:
-        return False, payload, "server does not advertise live-client enrollment"
-    if not license_info.get("valid"):
-        return False, payload, "Enterprise Server license is missing or invalid"
-    return True, payload, None
-
-
-def discover_portal_url(force: bool = False) -> str | None:
-    now = time.time()
-    if not force and now - float(portal_discovery_cache.get("checked_at") or 0) < 30:
-        return portal_discovery_cache.get("url")
-
-    candidates = [PORTAL_URL] if PORTAL_URL else []
-    candidates.extend([url.rstrip("/") for url in PORTAL_DISCOVERY_HOSTS if url.rstrip("/") not in candidates])
-    for url in candidates:
-        ok, server, error = check_portal_health(url)
-        if ok:
-            portal_discovery_cache.update({"checked_at": now, "url": url, "error": None, "last_error": None, "server": server})
-            return url
-        if error:
-            portal_discovery_cache["last_error"] = error
-    portal_discovery_cache.update(
-        {
-            "checked_at": now,
-            "url": None,
-            "server": None,
-            "error": "No licensed Enterprise Server discovered on the network.",
-        }
-    )
-    return None
-
-
-def schedule_portal_discovery(force: bool = False) -> None:
-    global portal_discovery_in_progress
-    with portal_discovery_lock:
-        if portal_discovery_in_progress:
-            return
-        checked_at = float(portal_discovery_cache.get("checked_at") or 0)
-        if not force and checked_at and time.time() - checked_at < 60:
-            return
-        portal_discovery_in_progress = True
-
-    def worker() -> None:
-        global portal_discovery_in_progress
-        try:
-            discover_portal_url(force=True)
-        finally:
-            with portal_discovery_lock:
-                portal_discovery_in_progress = False
-
-    threading.Thread(target=worker, daemon=True).start()
-
-
-def effective_portal_url() -> str | None:
-    return discover_portal_url()
-
-
-def portal_enabled() -> bool:
-    return bool(PORTAL_TOKEN and effective_portal_url())
-
-
-def instance_id() -> str:
-    if not INSTANCE_ID_PATH.exists():
-        INSTANCE_ID_PATH.parent.mkdir(parents=True, exist_ok=True)
-        INSTANCE_ID_PATH.write_text(uuid.uuid4().hex, encoding="utf-8")
-    return INSTANCE_ID_PATH.read_text(encoding="utf-8").strip()
-
-
-def portal_request(path: str, method: str = "GET", payload: dict[str, Any] | None = None, timeout: int = 10) -> dict[str, Any]:
-    portal_url = effective_portal_url()
-    if not portal_url:
-        raise RuntimeError("No Enterprise Server discovered.")
-    data = None
-    headers = {"Authorization": f"Bearer {PORTAL_TOKEN}"}
-    if payload is not None:
-        data = json.dumps(payload).encode("utf-8")
-        headers["Content-Type"] = "application/json"
-    req = urllib.request.Request(f"{portal_url}{path}", data=data, headers=headers, method=method)
-    with urllib.request.urlopen(req, timeout=timeout) as response:
-        body = response.read().decode("utf-8")
-    return json.loads(body) if body else {}
-
-
-def portal_snapshot() -> dict[str, Any]:
-    try:
-        disks = list_disks()
-    except Exception as exc:
-        disks = []
-        disk_error = str(exc)
-    else:
-        disk_error = None
-    return {
-        "disks": disks,
-        "active_jobs": serialized_jobs(active_only=True),
-        "disk_error": disk_error,
-    }
-
-
 def network_status() -> dict[str, Any]:
     default_interface = None
     route_rc, route_out, _ = run_command(["ip", "-j", "route", "show", "default"], timeout=5)
@@ -1309,124 +1176,19 @@ def network_status() -> dict[str, Any]:
         "addresses": addresses,
         "primary_address": primary_address or (addresses[0] if addresses else None),
         "error": None if rc == 0 else (err or out),
-        "configuration_available": bool(portal_discovery_cache.get("url")),
+        "configuration_available": True,
     }
 
 
-def enterprise_status(force: bool = False) -> dict[str, Any]:
-    schedule_portal_discovery(force=force)
-    url = portal_discovery_cache.get("url")
-    if not url:
-        state = "disabled"
-        if portal_discovery_in_progress:
-            reason = "Enterprise discovery is running in the background."
-        else:
-            reason = portal_discovery_cache.get("error") or "No licensed Enterprise Server discovered on the network."
-    elif not PORTAL_TOKEN:
-        state = "available"
-        reason = "Licensed Enterprise Server discovered, but no enrollment token is configured."
-    else:
-        state = "connected"
-        reason = "Licensed Enterprise Server discovered and token configured."
+def service_status(force: bool = False) -> dict[str, Any]:
     return {
-        "state": state,
-        "portal_url": url,
-        "configured_url": PORTAL_URL or None,
-        "server": portal_discovery_cache.get("server"),
-        "token_configured": bool(PORTAL_TOKEN),
-        "reason": reason,
+        "state": "disabled",
+        "reason": "Standalone local mode.",
         "features": {
-            "remote_management": state == "connected",
-            "server_upload": state == "connected",
-            "network_configuration": state in {"available", "connected"},
-            "destructive_remote_erase": False,
+            "network_configuration": True,
         },
         "network": network_status(),
     }
-
-
-def send_portal_heartbeat() -> None:
-    payload = {
-        "id": instance_id(),
-        "name": INSTANCE_NAME,
-        "base_url": "http://127.0.0.1:5055",
-        "version": "0.0.1b-dev",
-        "status": "online",
-        "capabilities": {
-            "tests": ["quick", "deep_sample", "smart_short", "smart_extended", "full"],
-            "remote_commands": ["refresh", "start_test", "safe_remove", "export_report"],
-            "destructive_remote_commands": False,
-        },
-        "snapshot": portal_snapshot(),
-    }
-    portal_request("/api/v1/instances/heartbeat", method="POST", payload=payload)
-
-
-def complete_portal_command(command_id: str, status: str, result: Any = None, error: str | None = None) -> None:
-    try:
-        portal_request(
-            f"/api/v1/commands/{command_id}/result",
-            method="POST",
-            payload={"status": status, "result": result, "error": error},
-        )
-    except Exception:
-        pass
-
-
-def execute_portal_command(command: dict[str, Any]) -> dict[str, Any]:
-    action = command.get("action")
-    if action == "refresh":
-        return portal_snapshot()
-    if action == "start_test":
-        device = command.get("device")
-        mode = command.get("mode") or "quick"
-        if not device:
-            raise ValueError("device is required")
-        if mode not in {"quick", "deep_sample", "smart_short", "smart_extended", "full"}:
-            raise ValueError(f"remote mode not allowed: {mode}")
-        job_id = start_test_job(device, mode, {"compliance_profile": command.get("compliance_profile") or "resale_basic", "remote": True})
-        return {"job_id": job_id}
-    if action == "safe_remove":
-        device = command.get("device")
-        if not device:
-            raise ValueError("device is required")
-        return safe_remove_disk(device)
-    if action == "export_report":
-        report_id = command.get("report_id")
-        if not report_id:
-            raise ValueError("report_id is required")
-        return export_report_pdf(report_id)
-    raise ValueError(f"unsupported remote command: {action}")
-
-
-def poll_portal_commands() -> None:
-    response = portal_request(f"/api/v1/instances/{instance_id()}/commands/next")
-    command = response.get("command")
-    if not command:
-        return
-    command_id = command.pop("id")
-    try:
-        result = execute_portal_command(command)
-        complete_portal_command(command_id, "done", result=result)
-    except Exception as exc:
-        complete_portal_command(command_id, "error", error=str(exc))
-
-
-def portal_agent_loop() -> None:
-    while True:
-        try:
-            send_portal_heartbeat()
-            poll_portal_commands()
-        except Exception:
-            pass
-        time.sleep(10)
-
-
-def start_portal_agent() -> None:
-    if not portal_enabled():
-        return
-    thread = threading.Thread(target=portal_agent_loop, daemon=True)
-    thread.start()
 
 
 def get_disk(device_name: str) -> dict[str, Any]:
@@ -3678,9 +3440,9 @@ def api_vendor_tool_download_info(tool_id: str):
         return jsonify({"error": str(exc)}), 500
 
 
-@app.get("/api/enterprise/status")
-def api_enterprise_status():
-    return jsonify(enterprise_status(force=request.args.get("refresh") == "1"))
+@app.get("/api/service/status")
+def api_service_status():
+    return jsonify(service_status(force=request.args.get("refresh") == "1"))
 
 
 @app.post("/api/reports/<report_id>/export-pdf")
@@ -3739,5 +3501,4 @@ def api_delete_report(report_id: str):
 
 
 if __name__ == "__main__":
-    start_portal_agent()
     app.run(debug=False, host="127.0.0.1", port=5055, threaded=True)
