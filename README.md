@@ -157,8 +157,16 @@ DriveProof can also be built as a Linux self-contained binary for workshop PCs
 where you do not want to start it through a Python virtual environment.
 
 The binary bundles the DriveProof Python application, templates, static assets,
-and license documents. Low-level disk tools are still external Linux
-dependencies because they need direct OS and device access:
+and license documents. Low-level disk tools can be supplied by the host system
+or by a tool directory next to the binary. DriveProof looks for tools in this
+order:
+
+1. Directories listed in `DRIVEPROOF_TOOLS_DIR`
+2. `tools/` next to the `driveproof` binary
+3. `tools/` inside the bundled application
+4. The normal system `PATH`
+
+The following tools are required for full functionality:
 
 - `smartctl` from `smartmontools`
 - `hdparm`
@@ -166,6 +174,27 @@ dependencies because they need direct OS and device access:
 - `lsblk` / `blockdev` from `util-linux`
 - `udisksctl` from `udisks2`
 - Chromium or Chrome for PDF export
+
+Example portable layout:
+
+```text
+driveproof-portable/
+├── driveproof
+└── tools/
+    ├── smartctl
+    ├── hdparm
+    ├── nvme
+    ├── lsblk
+    ├── blockdev
+    ├── udisksctl
+    └── chromium
+```
+
+Bundling these tools into the single PyInstaller executable is not recommended.
+They are Linux system tools that depend on kernel device access, udev/D-Bus
+integration, and shared libraries. The NixOS live image remains the preferred
+fully reproducible distribution format because it includes the matching OS,
+services, and tools together.
 
 Build:
 

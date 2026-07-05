@@ -35,6 +35,12 @@ def resource_base_dir() -> Path:
     return Path(__file__).resolve().parent
 
 
+def runtime_base_dir() -> Path:
+    if bundled():
+        return Path(sys.executable).resolve().parent
+    return Path(__file__).resolve().parent
+
+
 def default_state_dir() -> Path:
     if bundled():
         return Path.home() / ".local" / "state" / "driveproof"
@@ -42,6 +48,7 @@ def default_state_dir() -> Path:
 
 
 BASE_DIR = resource_base_dir()
+RUNTIME_DIR = runtime_base_dir()
 STATE_DIR = Path(os.environ.get("DRIVEPROOF_STATE_DIR", default_state_dir()))
 REPORT_DIR = STATE_DIR / "reports"
 DB_PATH = STATE_DIR / "state.db"
@@ -89,6 +96,25 @@ COMPLIANCE_PROFILES = {
 }
 
 app = Flask(__name__, template_folder=str(BASE_DIR / "templates"), static_folder=str(BASE_DIR / "static"))
+
+
+def tool_search_dirs() -> list[Path]:
+    dirs: list[Path] = []
+    for item in os.environ.get("DRIVEPROOF_TOOLS_DIR", "").split(os.pathsep):
+        if item.strip():
+            dirs.append(Path(item).expanduser())
+    dirs.extend([RUNTIME_DIR / "tools", BASE_DIR / "tools"])
+    return dirs
+
+
+def tool_path(name: str) -> str | None:
+    if os.path.sep in name:
+        return name if os.access(name, os.X_OK) else None
+    for directory in tool_search_dirs():
+        candidate = directory / name
+        if candidate.exists() and os.access(candidate, os.X_OK):
+            return str(candidate)
+    return shutil.which(name)
 
 
 def utc_now_iso() -> str:
@@ -325,9 +351,14 @@ init_db()
 def run_command(args: list[str], timeout: int = 20) -> tuple[int, str, str]:
     import subprocess
 
+    resolved_args = list(args)
+    resolved_tool = tool_path(resolved_args[0])
+    if resolved_tool:
+        resolved_args[0] = resolved_tool
+
     try:
         proc = subprocess.run(
-            args,
+            resolved_args,
             capture_output=True,
             text=True,
             timeout=timeout,
@@ -520,7 +551,7 @@ def default_export_target() -> dict[str, Any]:
 
 def chrome_binary() -> str | None:
     for name in ("chromium", "chromium-browser", "google-chrome", "chrome"):
-        path = shutil.which(name)
+        path = tool_path(name)
         if path:
             return path
     return None
@@ -1266,7 +1297,7 @@ def secure_erase_capabilities(disk: dict[str, Any]) -> dict[str, Any]:
 def nvme_erase_capabilities(disk: dict[str, Any]) -> dict[str, Any]:
     if disk.get("kind") != "NVMe" and (disk.get("transport") or "").lower() != "nvme":
         return {"supported": False, "reason": "Not an NVMe drive."}
-    if not shutil.which("nvme"):
+    if not tool_path("nvme"):
         return {"supported": False, "reason": "nvme-cli is not installed in this image."}
     return {
         "supported": False,
