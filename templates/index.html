@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>DriveProof</title>
     <link rel="icon" type="image/png" href="{{ url_for('static', filename='assets/driveproof-logo.png') }}">
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=20260705-dashboard-layout1">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=20260705-dashboard-network1">
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   </head>
   <body data-page="{{ active_page or 'dashboard' }}">
@@ -27,6 +27,10 @@
             <a class="nav-link {{ 'active' if active_page == 'reports' else '' }}" href="/reports">Reports</a>
             <a class="nav-link {{ 'active' if active_page == 'settings' else '' }}" href="/settings">Settings</a>
           </nav>
+          <button id="topbarNetworkStatus" class="network-chip" type="button" title="Open network settings">
+            <span id="topbarNetworkMode">DHCP</span>
+            <strong id="topbarNetworkAddress">No IPv4</strong>
+          </button>
           <div class="theme-switch" aria-label="Theme">
             <button id="themeSystem" class="theme-button active">System</button>
             <button id="themeDark" class="theme-button">Dark</button>
@@ -262,6 +266,6 @@
       </footer>
     </div>
 
-    <script src="{{ url_for('static', filename='app.js') }}?v=20260705-dashboard-layout1"></script>
+    <script src="{{ url_for('static', filename='app.js') }}?v=20260705-dashboard-network1"></script>
   </body>
   </html>

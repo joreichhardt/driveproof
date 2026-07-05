@@ -1146,8 +1146,19 @@ def portal_snapshot() -> dict[str, Any]:
 
 
 def network_status() -> dict[str, Any]:
+    default_interface = None
+    route_rc, route_out, _ = run_command(["ip", "-j", "route", "show", "default"], timeout=5)
+    if route_rc == 0:
+        try:
+            routes = json.loads(route_out)
+            if routes:
+                default_interface = routes[0].get("dev")
+        except Exception:
+            default_interface = None
+
     rc, out, err = run_command(["ip", "-j", "addr"], timeout=5)
     addresses: list[dict[str, Any]] = []
+    primary_address = None
     if rc == 0:
         try:
             for iface in json.loads(out):
@@ -1155,12 +1166,16 @@ def network_status() -> dict[str, Any]:
                     continue
                 for addr in iface.get("addr_info") or []:
                     if addr.get("family") == "inet":
-                        addresses.append({"interface": iface.get("ifname"), "address": addr.get("local"), "prefixlen": addr.get("prefixlen")})
+                        item = {"interface": iface.get("ifname"), "address": addr.get("local"), "prefixlen": addr.get("prefixlen")}
+                        addresses.append(item)
+                        if iface.get("ifname") == default_interface and primary_address is None:
+                            primary_address = item
         except Exception:
             pass
     return {
         "mode": "dhcp",
         "addresses": addresses,
+        "primary_address": primary_address or (addresses[0] if addresses else None),
         "error": None if rc == 0 else (err or out),
         "configuration_available": bool(portal_discovery_cache.get("url")),
     }

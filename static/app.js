@@ -82,6 +82,15 @@ function formatBytes(bytes) {
   return `${value.toFixed(1)} ${unit}`;
 }
 
+function escapeHtml(value) {
+  return String(value ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
+}
+
 function formatTemperature(value) {
   const numeric = Number(value);
   if (!Number.isFinite(numeric)) return "n/a";
@@ -432,6 +441,9 @@ function renderEnterpriseStatus() {
   const networkMode = byId("networkMode");
   const networkAddresses = byId("networkAddresses");
   const networkConfigButton = byId("networkConfigButton");
+  const topbarNetworkStatus = byId("topbarNetworkStatus");
+  const topbarNetworkMode = byId("topbarNetworkMode");
+  const topbarNetworkAddress = byId("topbarNetworkAddress");
   const stateLabel = {
     disabled: "Local mode",
     available: "Server available",
@@ -450,11 +462,26 @@ function renderEnterpriseStatus() {
   reason.textContent = status.reason || "Enterprise features are unavailable.";
 
   const network = status.network || {};
-  networkMode.textContent = `${String(network.mode || "dhcp").toUpperCase()} default`;
+  const modeLabel = `${String(network.mode || "dhcp").toUpperCase()} default`;
+  networkMode.textContent = modeLabel;
   const addresses = network.addresses || [];
+  const primaryAddress = network.primary_address || addresses[0] || null;
   networkAddresses.textContent = addresses.length
     ? addresses.map((addr) => `${addr.interface}: ${addr.address}/${addr.prefixlen}`).join(" · ")
     : "No IPv4 address detected yet.";
+  if (topbarNetworkStatus && topbarNetworkMode && topbarNetworkAddress) {
+    topbarNetworkMode.textContent = String(network.mode || "dhcp").toUpperCase();
+    topbarNetworkAddress.textContent = primaryAddress
+      ? `${primaryAddress.address}/${primaryAddress.prefixlen}`
+      : "No IPv4";
+    topbarNetworkStatus.classList.toggle("online", Boolean(primaryAddress));
+    topbarNetworkStatus.title = primaryAddress
+      ? `Network: ${primaryAddress.interface}: ${primaryAddress.address}/${primaryAddress.prefixlen}`
+      : "No IPv4 address detected. Open network settings.";
+    topbarNetworkStatus.onclick = () => {
+      window.location.href = "/settings";
+    };
+  }
 
   networkConfigButton.classList.remove("hidden");
   networkConfigButton.onclick = () => {
@@ -537,6 +564,16 @@ function renderDashboard() {
     const groups = ["HDD", "SSD", "NVMe", "Other"];
     for (const group of groups) {
       const disks = visibleDisks().filter((disk) => (["HDD", "SSD", "NVMe"].includes(disk.kind) ? disk.kind : "Other") === group);
+      const rows = disks.map((disk) => {
+        const title = `${disk.vendor || ""} ${disk.model || disk.name}`.trim();
+        const meta = `${disk.path} · ${formatBytes(disk.size_bytes)} · ${disk.internal ? "internal" : "external"}`;
+        return `
+            <div class="dashboard-list-row">
+              <span title="${escapeHtml(title)}">${escapeHtml(title)}</span>
+              <span title="${escapeHtml(meta)}">${escapeHtml(meta)}</span>
+            </div>
+          `;
+      }).join("");
       const card = document.createElement("div");
       card.className = "dashboard-card";
       card.innerHTML = `
@@ -545,12 +582,7 @@ function renderDashboard() {
           <span class="badge">${disks.length}</span>
         </div>
         <div class="dashboard-list">
-          ${disks.length ? disks.map((disk) => `
-            <div class="dashboard-list-row">
-              <span>${disk.vendor || ""} ${disk.model || disk.name}</span>
-              <span>${disk.path} · ${formatBytes(disk.size_bytes)} · ${disk.internal ? "internal" : "external"}</span>
-            </div>
-          `).join("") : '<div class="muted">No drives detected.</div>'}
+          ${disks.length ? rows : '<div class="muted">No drives detected.</div>'}
         </div>
       `;
       groupContainer.appendChild(card);
