@@ -65,6 +65,10 @@
           <div class="summary-item"><span>Started</span><strong>{{ report.test.erasure.started_at }}</strong></div>
           <div class="summary-item"><span>Completed</span><strong>{{ report.test.erasure.completed_at }}</strong></div>
           <div class="summary-item wide"><span>Verification</span><strong>{{ report.test.erasure.verification }}</strong></div>
+          {% if report.test.erasure.verification_result %}
+          <div class="summary-item"><span>Samples</span><strong>{{ report.test.erasure.verification_result.sample_count }}</strong></div>
+          <div class="summary-item wide"><span>Verification Result</span><strong>{{ report.test.erasure.verification_result.statement }}</strong></div>
+          {% endif %}
         </div>
       </section>
       {% endif %}

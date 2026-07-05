@@ -35,12 +35,6 @@ def resource_base_dir() -> Path:
     return Path(__file__).resolve().parent
 
 
-def runtime_base_dir() -> Path:
-    if bundled():
-        return Path(sys.executable).resolve().parent
-    return Path(__file__).resolve().parent
-
-
 def default_state_dir() -> Path:
     if bundled():
         return Path.home() / ".local" / "state" / "driveproof"
@@ -48,7 +42,6 @@ def default_state_dir() -> Path:
 
 
 BASE_DIR = resource_base_dir()
-RUNTIME_DIR = runtime_base_dir()
 STATE_DIR = Path(os.environ.get("DRIVEPROOF_STATE_DIR", default_state_dir()))
 REPORT_DIR = STATE_DIR / "reports"
 DB_PATH = STATE_DIR / "state.db"
@@ -98,23 +91,18 @@ COMPLIANCE_PROFILES = {
 app = Flask(__name__, template_folder=str(BASE_DIR / "templates"), static_folder=str(BASE_DIR / "static"))
 
 
-def tool_search_dirs() -> list[Path]:
-    dirs: list[Path] = []
-    for item in os.environ.get("DRIVEPROOF_TOOLS_DIR", "").split(os.pathsep):
-        if item.strip():
-            dirs.append(Path(item).expanduser())
-    dirs.extend([RUNTIME_DIR / "tools", BASE_DIR / "tools"])
-    return dirs
-
-
 def tool_path(name: str) -> str | None:
     if os.path.sep in name:
         return name if os.access(name, os.X_OK) else None
-    for directory in tool_search_dirs():
-        candidate = directory / name
-        if candidate.exists() and os.access(candidate, os.X_OK):
-            return str(candidate)
     return shutil.which(name)
+
+
+def resolved_command(args: list[str]) -> list[str]:
+    resolved = list(args)
+    resolved_tool = tool_path(resolved[0])
+    if resolved_tool:
+        resolved[0] = resolved_tool
+    return resolved
 
 
 def utc_now_iso() -> str:
@@ -351,10 +339,7 @@ init_db()
 def run_command(args: list[str], timeout: int = 20) -> tuple[int, str, str]:
     import subprocess
 
-    resolved_args = list(args)
-    resolved_tool = tool_path(resolved_args[0])
-    if resolved_tool:
-        resolved_args[0] = resolved_tool
+    resolved_args = resolved_command(args)
 
     try:
         proc = subprocess.run(
@@ -1299,10 +1284,19 @@ def nvme_erase_capabilities(disk: dict[str, Any]) -> dict[str, Any]:
         return {"supported": False, "reason": "Not an NVMe drive."}
     if not tool_path("nvme"):
         return {"supported": False, "reason": "nvme-cli is not installed in this image."}
+    rc, out, err = run_command(["nvme", "id-ctrl", disk["path"], "-o", "json"], timeout=30)
+    details: dict[str, Any] = {}
+    if out.strip():
+        try:
+            details = json.loads(out)
+        except json.JSONDecodeError:
+            details = {"raw": out.strip()[:1000]}
     return {
-        "supported": False,
-        "reason": "NVMe sanitize/format support is visible, but destructive execution is not enabled yet. Use SMART/read reports or an audited external NVMe erase workflow for now.",
+        "supported": True,
+        "reason": "NVMe Format NVM user-data erase is available through nvme-cli. This is destructive and requires exact device confirmation.",
         "tool": "nvme-cli",
+        "method": "format_nvm_user_data_erase",
+        "details": details,
     }
 
 
@@ -1528,7 +1522,7 @@ def verkoop_summary(report: dict[str, Any]) -> dict[str, str]:
     offline = int(str(overview.get("offline_uncorrectable", "0")).split()[0]) if str(overview.get("offline_uncorrectable", "0")).split()[0].isdigit() else 0
 
     if pending or reallocated or offline or score < 60:
-        verdict = "Nur mit deutlichem Hinweis verkaufen"
+        verdict = "Sell only with clear disclosure"
     elif score >= 85 and test.get("credibility_level") in {"high", "very_high"}:
         verdict = "Good for resale"
     else:
@@ -1581,6 +1575,9 @@ def build_report_payload(
         report["audit"].append(audit_event("pre_erase_device_actions", actions=test_result.get("actions")))
     if test_result.get("erasure"):
         report["audit"].append(audit_event("erase_completed", erasure=test_result.get("erasure")))
+        verification = (test_result.get("erasure") or {}).get("verification_result")
+        if verification:
+            report["audit"].append(audit_event("erase_verification_recorded", verification=verification))
     report["sales_summary"] = verkoop_summary(enrich_report(report))
     return report
 
@@ -1721,6 +1718,7 @@ def running_job_snapshot_test(job: TestJob, disk: dict[str, Any]) -> dict[str, A
         "erase_zero": "Running zero erase",
         "secure_erase_ata": "Running ATA Secure Erase",
         "secure_erase_ata_enhanced": "Running ATA Enhanced Secure Erase",
+        "nvme_format": "Running NVMe Format Erase",
     }
     claim_map = {
         "quick": "The sample read test is still running. This report is only a snapshot.",
@@ -1731,6 +1729,7 @@ def running_job_snapshot_test(job: TestJob, disk: dict[str, Any]) -> dict[str, A
         "erase_zero": "The zero erase is still running. This report is only a snapshot.",
         "secure_erase_ata": "The ATA Secure Erase is still running. This report is only a snapshot.",
         "secure_erase_ata_enhanced": "The ATA Enhanced Secure Erase is still running. This report is only a snapshot.",
+        "nvme_format": "The NVMe Format Erase is still running. This report is only a snapshot.",
     }
     credibility = "low" if job.mode not in {"smart_short", "smart_extended"} else "medium"
     if job.mode in {"smart_short", "smart_extended"}:
@@ -2112,6 +2111,54 @@ def full_read_scan(device_path: str, size_bytes: int, job: TestJob) -> dict[str,
     }
 
 
+def verification_offsets(size_bytes: int, sample_size: int) -> list[int]:
+    if size_bytes <= 0:
+        return [0]
+    max_offset = max(0, size_bytes - sample_size)
+    points = [0.0, 0.5, 0.98]
+    return sorted({int(max_offset * point) for point in points})
+
+
+def verify_erase_samples(
+    device_path: str,
+    size_bytes: int,
+    *,
+    expected_byte: int = 0,
+    sample_size: int = 1024 * 1024,
+) -> dict[str, Any]:
+    samples = []
+    all_match = True
+    expected = bytes([expected_byte])
+    with open(device_path, "rb", buffering=0) as handle:
+        for index, offset in enumerate(verification_offsets(size_bytes, sample_size), start=1):
+            os.lseek(handle.fileno(), offset, os.SEEK_SET)
+            data = os.read(handle.fileno(), min(sample_size, max(1, size_bytes - offset)))
+            if not data:
+                raise IOError(f"Verification read returned no data at offset {offset}")
+            sha256 = hashlib.sha256(data).hexdigest()
+            matches = data == expected * len(data)
+            all_match = all_match and matches
+            samples.append(
+                {
+                    "sample": index,
+                    "offset_bytes": offset,
+                    "length_bytes": len(data),
+                    "expected": f"0x{expected_byte:02x}",
+                    "matches_expected": matches,
+                    "sha256": sha256,
+                }
+            )
+    return {
+        "type": "post_erase_sample_read",
+        "sample_count": len(samples),
+        "sample_size_bytes": sample_size,
+        "expected_pattern": f"0x{expected_byte:02x}",
+        "all_samples_match_expected": all_match,
+        "samples": samples,
+        "statement": "All sampled regions matched the expected erased pattern." if all_match else "At least one sampled region did not match the expected erased pattern.",
+    }
+
+
 def run_smart_extended_test(device_path: str, job: TestJob) -> dict[str, Any]:
     caps = smart_selftest_capabilities(device_path)
     if not caps.get("supported"):
@@ -2241,7 +2288,7 @@ def run_zero_erase(disk: dict[str, Any], job: TestJob, allow_internal: bool = Fa
     ]
     started = time.time()
     started_iso = utc_now_iso()
-    proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
+    proc = subprocess.Popen(resolved_command(cmd), stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
     bytes_written = 0
     progress_re = re.compile(r"(\d+)\s+bytes")
     assert proc.stderr is not None
@@ -2255,6 +2302,12 @@ def run_zero_erase(disk: dict[str, Any], job: TestJob, allow_internal: bool = Fa
     rc = proc.wait()
     if rc != 0:
         raise RuntimeError(f"Erase failed (exit {rc})")
+    job.progress = 0.99
+    job.current_step = "Verifying erased samples"
+    persist_job_state(job)
+    verification = verify_erase_samples(disk["path"], total, expected_byte=0)
+    if not verification["all_samples_match_expected"]:
+        raise RuntimeError("Zero erase verification failed: sampled regions did not all contain zeros.")
     duration = max(0.001, time.time() - started)
     compliance = compliance_from_options(job.options)
     return {
@@ -2276,7 +2329,8 @@ def run_zero_erase(disk: dict[str, Any], job: TestJob, allow_internal: bool = Fa
             "bytes_targeted": total,
             "bytes_confirmed_by_tool": total,
             "compliance_profile": compliance,
-            "verification": "tool exit status and byte count; no post-erase sampling verification yet",
+            "verification": "dd exit status, byte count, and post-erase sample reads",
+            "verification_result": verification,
         },
     }
 
@@ -2307,7 +2361,7 @@ def run_secure_erase_ata(
     started_iso = utc_now_iso()
 
     set_pass = subprocess.run(
-        ["hdparm", "--user-master", "u", f"--security-set-pass", password, disk["path"]],
+        resolved_command(["hdparm", "--user-master", "u", f"--security-set-pass", password, disk["path"]]),
         capture_output=True,
         text=True,
         check=False,
@@ -2320,7 +2374,7 @@ def run_secure_erase_ata(
     persist_job_state(job)
 
     proc = subprocess.Popen(
-        ["hdparm", "--user-master", "u", method_flag, password, disk["path"]],
+        resolved_command(["hdparm", "--user-master", "u", method_flag, password, disk["path"]]),
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
@@ -2336,6 +2390,10 @@ def run_secure_erase_ata(
     if proc.returncode != 0:
         raise RuntimeError(stderr.strip() or stdout.strip() or "ATA Secure Erase failed.")
 
+    job.progress = 0.99
+    job.current_step = "Verifying erased samples"
+    persist_job_state(job)
+    verification = verify_erase_samples(disk["path"], disk["size_bytes"], expected_byte=0)
     duration = max(0.001, time.time() - started)
     compliance = compliance_from_options(job.options)
     return {
@@ -2354,7 +2412,69 @@ def run_secure_erase_ata(
             "device": disk["path"],
             "serial": disk.get("serial"),
             "compliance_profile": compliance,
-            "verification": "hdparm exit status; firmware performs erase internally",
+            "verification": "hdparm exit status plus post-erase sample reads. Firmware erase implementations may not always return a zero pattern after completion.",
+            "verification_result": verification,
+        },
+    }
+
+
+def run_nvme_format_erase(disk: dict[str, Any], job: TestJob, allow_internal: bool = False) -> dict[str, Any]:
+    import subprocess
+
+    caps = nvme_erase_capabilities(disk)
+    if not caps.get("supported"):
+        raise RuntimeError(caps.get("reason") or "NVMe erase is not available.")
+
+    erase_allowed(disk, allow_internal=allow_internal)
+    actions = unmount_disk_children(disk["name"])
+    started = time.time()
+    started_iso = utc_now_iso()
+    label = "NVMe Format NVM user-data erase"
+
+    job.progress = 0.02
+    job.current_step = f"{label} started"
+    persist_job_state(job)
+
+    proc = subprocess.Popen(
+        resolved_command(["nvme", "format", disk["path"], "--ses=1", "--force"]),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    while proc.poll() is None:
+        elapsed_min = int((time.time() - started) / 60)
+        job.current_step = f"{label} running ({elapsed_min} min)"
+        persist_job_state(job)
+        time.sleep(15)
+
+    stdout, stderr = proc.communicate()
+    if proc.returncode != 0:
+        raise RuntimeError(stderr.strip() or stdout.strip() or "NVMe Format NVM erase failed.")
+
+    job.progress = 0.99
+    job.current_step = "Verifying erased samples"
+    persist_job_state(job)
+    verification = verify_erase_samples(disk["path"], disk["size_bytes"], expected_byte=0)
+
+    duration = max(0.001, time.time() - started)
+    compliance = compliance_from_options(job.options)
+    return {
+        "type": "nvme_format",
+        "label": label,
+        "credibility_level": "destructive",
+        "buyer_claim": "The NVMe drive was erased using NVMe Format NVM with Secure Erase Setting 1, followed by sample verification.",
+        "duration_s": round(duration, 2),
+        "actions": actions,
+        "erasure": {
+            "method": "nvme_format_nvm_ses_1_user_data_erase",
+            "tool": "nvme-cli",
+            "started_at": started_iso,
+            "completed_at": utc_now_iso(),
+            "device": disk["path"],
+            "serial": disk.get("serial"),
+            "compliance_profile": compliance,
+            "verification": "nvme-cli exit status plus post-erase sample reads. NVMe controller behavior can vary by firmware.",
+            "verification_result": verification,
         },
     }
 
@@ -2395,6 +2515,8 @@ def run_test_job(job_id: str) -> None:
                 allow_internal=allow_internal_erase,
                 enhanced=job.mode == "secure_erase_ata_enhanced",
             )
+        elif job.mode == "nvme_format":
+            test_result = run_nvme_format_erase(disk, job, allow_internal=allow_internal_erase)
         else:
             raise ValueError(f"Unsupported mode: {job.mode}")
 
@@ -2680,6 +2802,40 @@ def api_secure_erase_disk(device_name: str):
             mode="secure_erase_ata_enhanced" if method == "enhanced" else "secure_erase_ata",
             created_at=utc_now_iso(),
             options={"allow_internal_erase": allow_internal, "secure_erase_method": method, "compliance_profile": compliance_profile},
+        )
+        with jobs_lock:
+            jobs[job_id] = job
+        save_job(job)
+        thread = threading.Thread(target=run_test_job, args=(job_id,), daemon=True)
+        thread.start()
+        return jsonify({"job_id": job_id})
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 500
+
+
+@app.post("/api/disks/<device_name>/nvme-erase")
+def api_nvme_erase_disk(device_name: str):
+    payload = request.get_json(silent=True) or {}
+    confirmation = (payload.get("confirmation") or "").strip()
+    allow_internal = bool(payload.get("allow_internal"))
+    compliance_profile = payload.get("compliance_profile") or "nist_purge"
+    try:
+        disk = get_disk(device_name)
+        caps = nvme_erase_capabilities(disk)
+        if not caps.get("supported"):
+            return jsonify({"error": caps.get("reason") or "NVMe erase is not available."}), 400
+        if has_active_job_for_device(device_name):
+            return jsonify({"error": "An app job is already running for this drive."}), 409
+        expected = {disk["path"], disk["serial"]}
+        if confirmation not in expected:
+            return jsonify({"error": "Confirmation must exactly match the device path or serial number."}), 400
+        job_id = uuid.uuid4().hex[:12]
+        job = TestJob(
+            id=job_id,
+            device=device_name,
+            mode="nvme_format",
+            created_at=utc_now_iso(),
+            options={"allow_internal_erase": allow_internal, "compliance_profile": compliance_profile},
         )
         with jobs_lock:
             jobs[job_id] = job

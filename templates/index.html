@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>DriveProof</title>
     <link rel="icon" type="image/png" href="{{ url_for('static', filename='assets/driveproof-logo.png') }}">
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=20260705-compliance1">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=20260705-erase2">
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   </head>
   <body data-page="{{ active_page or 'dashboard' }}">
@@ -46,6 +46,16 @@
               <input id="showInternalDisks" type="checkbox">
               <span>Show internal drives</span>
             </label>
+          </div>
+          <div class="batch-controls" aria-label="Batch drive selection">
+            <div class="block-label">Batch selection</div>
+            <div class="batch-button-grid">
+              <button id="selectHddButton" class="mini-action" type="button">All HDD</button>
+              <button id="selectSsdButton" class="mini-action" type="button">All SSD</button>
+              <button id="selectNvmeButton" class="mini-action" type="button">All NVMe</button>
+              <button id="selectAllButton" class="mini-action" type="button">All visible</button>
+              <button id="clearSelectionButton" class="mini-action" type="button">Clear</button>
+            </div>
           </div>
           <div class="enterprise-card" id="enterpriseCard">
             <div class="enterprise-head">
@@ -113,7 +123,7 @@
                     <button id="safeRemoveButton" class="safe-remove-button">Safely remove</button>
                   </div>
                 </details>
-                <details class="tool-menu" open>
+                <details class="tool-menu compliance-menu" open>
                   <summary>Compliance & audit</summary>
                   <label class="field-label" for="complianceProfile">Report profile</label>
                   <select id="complianceProfile" class="select-input"></select>
@@ -152,7 +162,7 @@
                     <button id="secureEraseButton" class="erase-button secondary">ATA Secure Erase</button>
                     <button id="enhancedSecureEraseButton" class="erase-button secondary">ATA Enhanced Secure Erase</button>
                     <div id="nvmeEraseHint" class="muted">Checking NVMe erase support.</div>
-                    <button id="nvmeEraseButton" class="erase-button secondary" disabled>NVMe Sanitize / Format</button>
+                    <button id="nvmeEraseButton" class="erase-button secondary" disabled>NVMe Format Erase</button>
                   </div>
                 </details>
                 <details class="tool-menu jobs-menu" open>
@@ -193,6 +203,6 @@
       </footer>
     </div>
 
-    <script src="{{ url_for('static', filename='app.js') }}?v=20260705-compliance1"></script>
+    <script src="{{ url_for('static', filename='app.js') }}?v=20260705-erase2"></script>
   </body>
   </html>

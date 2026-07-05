@@ -163,6 +163,10 @@
           {% if report.test.erasure %}
           <p>Erase Method: {{ report.test.erasure.method }}</p>
           <p>Erase Verification: {{ report.test.erasure.verification }}</p>
+          {% if report.test.erasure.verification_result %}
+          <p>Verification Result: {{ report.test.erasure.verification_result.statement }}</p>
+          <p>Samples Checked: {{ report.test.erasure.verification_result.sample_count }}</p>
+          {% endif %}
           {% endif %}
         </article>
 

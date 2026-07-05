@@ -32,6 +32,7 @@ const MODE_HINTS = {
   erase_zero: "Single-pass zero write. Destructive.",
   secure_erase_ata: "ATA Secure Erase. Destructive.",
   secure_erase_ata_enhanced: "ATA Enhanced Secure Erase. Destructive.",
+  nvme_format: "NVMe Format NVM user-data erase. Destructive.",
   smart_extended_external: "SMART self-test started outside the app.",
 };
 
@@ -44,6 +45,7 @@ const MODE_LABELS = {
   erase_zero: "Zero Erase",
   secure_erase_ata: "ATA Secure Erase",
   secure_erase_ata_enhanced: "ATA Enhanced Secure Erase",
+  nvme_format: "NVMe Format Erase",
   smart_extended_external: "External SMART Test",
 };
 
@@ -196,6 +198,18 @@ function selectedBatchDisks() {
   return state.disks.filter((disk) => visibleNames.has(disk.name) && state.selectedDiskNames.has(disk.name));
 }
 
+function selectVisibleDisks(predicate) {
+  state.selectedDiskNames = new Set(
+    visibleDisks()
+      .filter(predicate)
+      .map((disk) => disk.name)
+  );
+  persistBatchSelection();
+  renderDiskList();
+  renderActiveJobs();
+  setControlsBusy();
+}
+
 function testTargetDisks() {
   const batch = selectedBatchDisks();
   if (batch.length) return batch;
@@ -279,12 +293,13 @@ function setControlsBusy() {
   const appBusy = Boolean(selectedAppJob || state.currentJobId);
   const deviceBusy = appBusy || Boolean(externalJob);
   const runnableTargets = testTargetDisks().filter((disk) => !hasAppJob(disk.name));
+  const internalEraseBlocked = state.selectedDisk?.internal && !state.settings.allowInternalErase;
   byId("runTestButton").disabled = !runnableTargets.length;
   byId("safeRemoveButton").disabled = deviceBusy;
-  byId("eraseButton").disabled = appBusy || !state.settings.enableDestructive;
-  byId("secureEraseButton").disabled = appBusy || !state.settings.enableDestructive || !state.secureErase?.basic_supported;
-  byId("enhancedSecureEraseButton").disabled = appBusy || !state.settings.enableDestructive || !state.secureErase?.enhanced_supported;
-  byId("nvmeEraseButton").disabled = true;
+  byId("eraseButton").disabled = appBusy || !state.settings.enableDestructive || internalEraseBlocked;
+  byId("secureEraseButton").disabled = appBusy || !state.settings.enableDestructive || internalEraseBlocked || !state.secureErase?.basic_supported;
+  byId("enhancedSecureEraseButton").disabled = appBusy || !state.settings.enableDestructive || internalEraseBlocked || !state.secureErase?.enhanced_supported;
+  byId("nvmeEraseButton").disabled = appBusy || !state.settings.enableDestructive || internalEraseBlocked || !state.nvmeErase?.supported;
   byId("abortSelftestButton").disabled = false;
   updateRunButtonLabel();
 }
@@ -510,7 +525,7 @@ function renderNvmeEraseOptions(nvmeErase) {
   const button = byId("nvmeEraseButton");
   if (!hint || !button) return;
   if (nvmeErase?.supported) {
-    hint.textContent = "NVMe sanitize/format support detected.";
+    hint.textContent = nvmeErase.reason || "NVMe Format NVM user-data erase is available.";
     button.disabled = !state.settings.enableDestructive;
   } else {
     hint.textContent = nvmeErase?.reason || "NVMe sanitize/format is not available for this drive.";
@@ -975,6 +990,19 @@ async function secureEraseSelectedDisk(method = "basic") {
   pollSelectedJob();
 }
 
+async function nvmeEraseSelectedDisk() {
+  if (!state.selectedDisk) return;
+  const confirmation = byId("eraseConfirmInput").value.trim();
+  const payload = await fetchJson(`/api/disks/${state.selectedDisk.name}/nvme-erase`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ confirmation, allow_internal: state.settings.allowInternalErase, compliance_profile: state.selectedComplianceProfile }),
+  });
+  state.currentJobId = payload.job_id;
+  await refreshActiveJobs();
+  pollSelectedJob();
+}
+
 function bindSettings() {
   byId("complianceProfile").onchange = (event) => {
     state.selectedComplianceProfile = event.target.value;
@@ -1030,6 +1058,11 @@ document.addEventListener("DOMContentLoaded", async () => {
     await refreshDisks();
     await refreshActiveJobs();
   };
+  byId("selectHddButton").onclick = () => selectVisibleDisks((disk) => disk.kind === "HDD");
+  byId("selectSsdButton").onclick = () => selectVisibleDisks((disk) => disk.kind === "SSD");
+  byId("selectNvmeButton").onclick = () => selectVisibleDisks((disk) => disk.kind === "NVMe");
+  byId("selectAllButton").onclick = () => selectVisibleDisks(() => true);
+  byId("clearSelectionButton").onclick = () => selectVisibleDisks(() => false);
   byId("runTestButton").onclick = () => startTest().catch((error) => {
     byId("jobStatus").textContent = `start error · ${error.message}`;
     setControlsBusy();
@@ -1046,6 +1079,10 @@ document.addEventListener("DOMContentLoaded", async () => {
   });
   byId("enhancedSecureEraseButton").onclick = () => secureEraseSelectedDisk("enhanced").catch((error) => {
     byId("jobStatus").textContent = `enhanced secure erase error · ${error.message}`;
+    setControlsBusy();
+  });
+  byId("nvmeEraseButton").onclick = () => nvmeEraseSelectedDisk().catch((error) => {
+    byId("jobStatus").textContent = `NVMe erase error · ${error.message}`;
     setControlsBusy();
   });
   bindSettings();

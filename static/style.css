@@ -378,6 +378,33 @@ h2 {
   gap: 10px;
 }
 
+.batch-controls {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+.batch-button-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.batch-button-grid .mini-action {
+  width: 100%;
+  justify-content: center;
+  text-align: center;
+}
+
+body[data-page="dashboard"] .diagnostics-menu,
+body[data-page="dashboard"] .erase-menu,
+body[data-page="dashboard"] .compliance-menu,
+body[data-page="dashboard"] .job-panel,
+body[data-page="test"] .erase-menu,
+body[data-page="erase"] .diagnostics-menu {
+  display: none;
+}
+
 .report-item {
   display: grid;
   gap: 10px;
