@@ -1,6 +1,7 @@
 const state = {
   disks: [],
   selectedDisk: null,
+  selectedDiskNames: new Set(),
   currentJobId: null,
   pollTimer: null,
   activeJobsTimer: null,
@@ -8,51 +9,57 @@ const state = {
   selectedDiskJobs: [],
   smartChart: null,
   selectedMode: "quick",
+  selectedComplianceProfile: "resale_basic",
+  complianceProfiles: {},
   secureErase: null,
+  nvmeErase: null,
   selftest: null,
   themeMode: "system",
+  enterprise: null,
   settings: {
-    showInternalDisks: false,
+    showInternalDisks: true,
     enableDestructive: false,
     allowInternalErase: false,
   },
 };
 
 const MODE_HINTS = {
-  quick: "Kurzer Stichproben-Lesetest fuer Vorsortierung.",
-  deep_sample: "Verteilter Lesetest ueber die Platte. Fuer HDDs sinnvoller als fuer SSD/NVMe.",
-  smart_short: "Kurzer Laufwerks-Selbsttest. Gut fuer SSD/NVMe und schnelle Vorpruefung.",
-  smart_extended: "Echter SMART Extended Self-Test des Laufwerks. Fuer Verkauf glaubwuerdig.",
-  full: "Kompletter Lesetest. Dauert lange und ist fuer den Verkauf die staerkste Lesetest-Aussage.",
-  erase_zero: "1x Nullschreiben. Destruktiv.",
-  secure_erase_ata: "ATA Secure Erase. Destruktiv.",
-  smart_extended_external: "Von ausserhalb der App gestarteter SMART Self-Test.",
+  quick: "Short sample read test for initial sorting.",
+  deep_sample: "Distributed read test across the drive. More useful for HDDs than SSD/NVMe.",
+  smart_short: "Short drive self-test. Good for SSD/NVMe and quick pre-checks.",
+  smart_extended: "Real SMART Extended self-test executed by the drive. Credible for resale.",
+  full: "Full read test. Takes longer and provides the strongest read-test claim for resale.",
+  erase_zero: "Single-pass zero write. Destructive.",
+  secure_erase_ata: "ATA Secure Erase. Destructive.",
+  secure_erase_ata_enhanced: "ATA Enhanced Secure Erase. Destructive.",
+  smart_extended_external: "SMART self-test started outside the app.",
 };
 
 const MODE_LABELS = {
-  quick: "Schnelltest",
-  deep_sample: "Tiefer Lesetest",
-  smart_short: "SMART Kurztest",
+  quick: "Quick",
+  deep_sample: "Deep Sample",
+  smart_short: "SMART Short",
   smart_extended: "SMART Extended",
-  full: "Vollscan",
-  erase_zero: "Nullschreiben",
+  full: "Full Read",
+  erase_zero: "Zero Erase",
   secure_erase_ata: "ATA Secure Erase",
-  smart_extended_external: "Externer SMART Test",
+  secure_erase_ata_enhanced: "ATA Enhanced Secure Erase",
+  smart_extended_external: "External SMART Test",
 };
 
 const OVERVIEW_LABELS = {
   summary: "Status",
-  kind: "Typ",
+  kind: "Type",
   interface: "Interface",
-  capacity: "Kapazitaet",
-  serial: "Seriennummer",
-  powerOnHours: "Betriebsstunden",
-  temperature: "Temperatur",
-  reallocated: "Neu zugewiesen",
-  pending: "Ausstehend",
-  offlineUncorrectable: "Nicht korrigierbar",
-  crcErrors: "CRC-Fehler",
-  mediaErrors: "Medienfehler",
+  capacity: "Capacity",
+  serial: "Serial",
+  powerOnHours: "Power-On Hours",
+  temperature: "Temperature",
+  reallocated: "Reallocated",
+  pending: "Pending",
+  offlineUncorrectable: "Offline Uncorrectable",
+  crcErrors: "CRC Errors",
+  mediaErrors: "Media Errors",
 };
 
 function formatBytes(bytes) {
@@ -115,8 +122,12 @@ function initTheme() {
 function loadSettings() {
   try {
     const raw = localStorage.getItem("safetySettings");
-    if (!raw) return;
-    state.settings = { ...state.settings, ...JSON.parse(raw) };
+    if (!raw) {
+      persistSettings();
+      return;
+    }
+    const parsed = JSON.parse(raw);
+    state.settings = { ...state.settings, ...parsed };
   } catch (_) {
     // ignore broken local storage
   }
@@ -126,10 +137,79 @@ function persistSettings() {
   localStorage.setItem("safetySettings", JSON.stringify(state.settings));
 }
 
+function loadComplianceSelection() {
+  state.selectedComplianceProfile = localStorage.getItem("complianceProfile") || "resale_basic";
+}
+
+async function loadComplianceProfiles() {
+  const payload = await fetchJson("/api/compliance-profiles");
+  state.complianceProfiles = payload.profiles || {};
+  renderComplianceProfiles();
+}
+
+function renderComplianceProfiles() {
+  const select = byId("complianceProfile");
+  if (!select) return;
+  const entries = Object.entries(state.complianceProfiles);
+  select.innerHTML = "";
+  for (const [id, profile] of entries) {
+    const option = document.createElement("option");
+    option.value = id;
+    option.textContent = profile.label || id;
+    select.appendChild(option);
+  }
+  if (!state.complianceProfiles[state.selectedComplianceProfile]) {
+    state.selectedComplianceProfile = entries[0]?.[0] || "resale_basic";
+  }
+  select.value = state.selectedComplianceProfile;
+  updateComplianceHint();
+}
+
+function updateComplianceHint() {
+  const profile = state.complianceProfiles[state.selectedComplianceProfile];
+  byId("complianceProfileHint").textContent = profile
+    ? `${profile.standard} · ${profile.description}`
+    : "Resale diagnostic report.";
+}
+
 function syncSettingsInputs() {
   byId("showInternalDisks").checked = state.settings.showInternalDisks;
   byId("enableDestructive").checked = state.settings.enableDestructive;
   byId("allowInternalErase").checked = state.settings.allowInternalErase;
+}
+
+function loadBatchSelection() {
+  try {
+    const names = JSON.parse(localStorage.getItem("selectedBatchDisks") || "[]");
+    state.selectedDiskNames = new Set(Array.isArray(names) ? names : []);
+  } catch (_) {
+    state.selectedDiskNames = new Set();
+  }
+}
+
+function persistBatchSelection() {
+  localStorage.setItem("selectedBatchDisks", JSON.stringify([...state.selectedDiskNames]));
+}
+
+function selectedBatchDisks() {
+  const visibleNames = new Set(visibleDisks().map((disk) => disk.name));
+  return state.disks.filter((disk) => visibleNames.has(disk.name) && state.selectedDiskNames.has(disk.name));
+}
+
+function testTargetDisks() {
+  const batch = selectedBatchDisks();
+  if (batch.length) return batch;
+  return state.selectedDisk ? [state.selectedDisk] : [];
+}
+
+function hasAppJob(device) {
+  return state.activeJobs.some((job) => job.device === device && !String(job.id).startsWith("external-"));
+}
+
+function updateRunButtonLabel() {
+  const targets = testTargetDisks();
+  const count = targets.length;
+  byId("runTestButton").textContent = count > 1 ? `Run test on ${count} drives` : "Run test";
 }
 
 function updateSafetyUi() {
@@ -157,6 +237,15 @@ function getSelectedExternalJob() {
 function getLatestCompletedSelectedJob() {
   if (!state.selectedDiskJobs?.length) return null;
   return state.selectedDiskJobs.find((job) => job.status === "done" && job.result?.report_id) || null;
+}
+
+function reportExportStatus(exportInfo) {
+  if (!exportInfo) return "not exported yet";
+  if (exportInfo.status === "saved") {
+    return `saved to ${exportInfo.target?.label || "export partition"} · ${exportInfo.pdf_name || "PDF"}`;
+  }
+  if (exportInfo.status === "error") return `export error · ${exportInfo.message}`;
+  return exportInfo.message || exportInfo.status || "export status unknown";
 }
 
 async function loadSelectedDiskJobs() {
@@ -189,11 +278,15 @@ function setControlsBusy() {
   const externalJob = getSelectedExternalJob();
   const appBusy = Boolean(selectedAppJob || state.currentJobId);
   const deviceBusy = appBusy || Boolean(externalJob);
-  byId("runTestButton").disabled = appBusy;
+  const runnableTargets = testTargetDisks().filter((disk) => !hasAppJob(disk.name));
+  byId("runTestButton").disabled = !runnableTargets.length;
   byId("safeRemoveButton").disabled = deviceBusy;
   byId("eraseButton").disabled = appBusy || !state.settings.enableDestructive;
-  byId("secureEraseButton").disabled = appBusy || !state.settings.enableDestructive || !state.secureErase?.supported;
+  byId("secureEraseButton").disabled = appBusy || !state.settings.enableDestructive || !state.secureErase?.basic_supported;
+  byId("enhancedSecureEraseButton").disabled = appBusy || !state.settings.enableDestructive || !state.secureErase?.enhanced_supported;
+  byId("nvmeEraseButton").disabled = true;
   byId("abortSelftestButton").disabled = false;
+  updateRunButtonLabel();
 }
 
 async function fetchJson(url, options = {}) {
@@ -203,6 +296,53 @@ async function fetchJson(url, options = {}) {
     throw new Error(payload.error || `HTTP ${response.status}`);
   }
   return payload;
+}
+
+async function refreshEnterpriseStatus(force = false) {
+  const suffix = force ? "?refresh=1" : "";
+  state.enterprise = await fetchJson(`/api/enterprise/status${suffix}`);
+  renderEnterpriseStatus();
+}
+
+function renderEnterpriseStatus() {
+  const status = state.enterprise;
+  const card = byId("enterpriseCard");
+  if (!card || !status) return;
+  const title = card.querySelector("h3");
+  const badge = byId("enterpriseBadge");
+  const reason = byId("enterpriseReason");
+  const networkMode = byId("networkMode");
+  const networkAddresses = byId("networkAddresses");
+  const networkConfigButton = byId("networkConfigButton");
+  const stateLabel = {
+    disabled: "Local mode",
+    available: "Server available",
+    connected: "Connected",
+  }[status.state] || "Local mode";
+  const badgeLabel = {
+    disabled: "Disabled",
+    available: "Licensed",
+    connected: "Connected",
+  }[status.state] || "Disabled";
+
+  card.dataset.state = status.state || "disabled";
+  title.textContent = stateLabel;
+  badge.textContent = badgeLabel;
+  badge.classList.toggle("muted-badge", status.state === "disabled");
+  reason.textContent = status.reason || "Enterprise features are unavailable.";
+
+  const network = status.network || {};
+  networkMode.textContent = `${String(network.mode || "dhcp").toUpperCase()} default`;
+  const addresses = network.addresses || [];
+  networkAddresses.textContent = addresses.length
+    ? addresses.map((addr) => `${addr.interface}: ${addr.address}/${addr.prefixlen}`).join(" · ")
+    : "No IPv4 address detected yet.";
+
+  const canConfigure = Boolean(status.features?.network_configuration);
+  networkConfigButton.classList.toggle("hidden", !canConfigure);
+  networkConfigButton.onclick = () => {
+    alert("Network configuration is managed by a licensed DriveProof Enterprise Server. DHCP remains the default for standalone live boot.");
+  };
 }
 
 function visibleDisks() {
@@ -215,29 +355,62 @@ function renderDiskList() {
 
   const disks = visibleDisks();
   if (!disks.length) {
-    container.innerHTML = `<div class="empty-inline muted">Keine passenden Laufwerke sichtbar. Fuer Serverplatten "Interne Laufwerke anzeigen" aktivieren.</div>`;
+    const total = state.disks.length;
+    const internalCount = state.disks.filter((disk) => disk.internal).length;
+    const message = total
+      ? `${total} drive(s) detected, ${internalCount} internal. Enable "Show internal drives" to display server disks.`
+      : "No drives detected by the system. Check controller mode, RAID/HBA passthrough, or open diagnostics from the boot menu.";
+    container.innerHTML = `<div class="empty-inline muted">${message}</div>`;
     return;
   }
 
   for (const disk of disks) {
-    const button = document.createElement("button");
+    const button = document.createElement("div");
     const running = state.activeJobs.some((job) => job.device === disk.name);
-    button.className = `disk-card ${state.selectedDisk?.name === disk.name ? "active" : ""}`;
+    const checked = state.selectedDiskNames.has(disk.name);
+    button.className = `disk-card ${state.selectedDisk?.name === disk.name ? "active" : ""} ${checked ? "batch-selected" : ""}`;
+    button.tabIndex = 0;
+    button.role = "button";
     button.innerHTML = `
       <div class="disk-card-head">
         <div class="disk-card-title">${disk.vendor || ""} ${disk.model || disk.name}</div>
-        ${running ? '<span class="pill pill-status">aktiv</span>' : ""}
+        ${running ? '<span class="pill pill-status">active</span>' : ""}
       </div>
       <div class="muted">${disk.path} · ${formatBytes(disk.size_bytes)}</div>
       <div class="pill-row">
         <span class="pill">${disk.transport}</span>
         <span class="pill">${disk.kind}</span>
-        ${disk.internal ? '<span class="pill">intern</span>' : '<span class="pill">extern</span>'}
+        ${disk.internal ? '<span class="pill">internal</span>' : '<span class="pill">external</span>'}
       </div>
+      <label class="disk-select">
+        <input type="checkbox" ${checked ? "checked" : ""}>
+        <span>Include in batch test</span>
+      </label>
     `;
     button.onclick = () => selectDisk(disk.name);
+    button.onkeydown = (event) => {
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        selectDisk(disk.name);
+      }
+    };
+    const checkbox = button.querySelector("input");
+    checkbox.onclick = (event) => event.stopPropagation();
+    checkbox.onchange = (event) => {
+      event.stopPropagation();
+      if (event.target.checked) {
+        state.selectedDiskNames.add(disk.name);
+      } else {
+        state.selectedDiskNames.delete(disk.name);
+      }
+      persistBatchSelection();
+      renderDiskList();
+      renderActiveJobs();
+      setControlsBusy();
+    };
     container.appendChild(button);
   }
+  updateRunButtonLabel();
 }
 
 function smartRows(smartPayload) {
@@ -248,11 +421,11 @@ function fallbackSmartRows(payload) {
   const nvme = payload?.nvme_smart_health_information_log;
   if (!nvme) return [];
   return [
-    { id: "-", name: "Power_On_Hours", label: "Betriebsstunden", value: "-", worst: "-", thresh: "-", raw: { value: payload?.power_on_time?.hours ?? 0 }, human: `${payload?.power_on_time?.hours ?? 0} h` },
-    { id: "-", name: "Temperature_Celsius", label: "Temperatur", value: "-", worst: "-", thresh: "-", raw: { value: payload?.temperature?.current ?? 0 }, human: formatTemperature(payload?.temperature?.current ?? 0) },
-    { id: "-", name: "Media_Errors", label: "Medienfehler", value: "-", worst: "-", thresh: "-", raw: { value: nvme.media_errors ?? 0 }, human: `${nvme.media_errors ?? 0}` },
-    { id: "-", name: "Unsafe_Shutdowns", label: "Unsichere Abschaltungen", value: "-", worst: "-", thresh: "-", raw: { value: nvme.unsafe_shutdowns ?? 0 }, human: `${nvme.unsafe_shutdowns ?? 0}` },
-    { id: "-", name: "Percentage_Used", label: "Abnutzung", value: "-", worst: "-", thresh: "-", raw: { value: nvme.percentage_used ?? 0 }, human: `${nvme.percentage_used ?? 0} %` },
+    { id: "-", name: "Power_On_Hours", label: "Power-On Hours", value: "-", worst: "-", thresh: "-", raw: { value: payload?.power_on_time?.hours ?? 0 }, human: `${payload?.power_on_time?.hours ?? 0} h` },
+    { id: "-", name: "Temperature_Celsius", label: "Temperature", value: "-", worst: "-", thresh: "-", raw: { value: payload?.temperature?.current ?? 0 }, human: formatTemperature(payload?.temperature?.current ?? 0) },
+    { id: "-", name: "Media_Errors", label: "Media Errors", value: "-", worst: "-", thresh: "-", raw: { value: nvme.media_errors ?? 0 }, human: `${nvme.media_errors ?? 0}` },
+    { id: "-", name: "Unsafe_Shutdowns", label: "Unsafe Shutdowns", value: "-", worst: "-", thresh: "-", raw: { value: nvme.unsafe_shutdowns ?? 0 }, human: `${nvme.unsafe_shutdowns ?? 0}` },
+    { id: "-", name: "Percentage_Used", label: "Wear Used", value: "-", worst: "-", thresh: "-", raw: { value: nvme.percentage_used ?? 0 }, human: `${nvme.percentage_used ?? 0} %` },
   ];
 }
 
@@ -290,9 +463,9 @@ function smartSeverity(row) {
 
 function renderHealth(health, disk) {
   byId("healthScore").textContent = health.score ?? "--";
-  byId("healthGrade").textContent = health.grade ?? "Unbekannt";
+  byId("healthGrade").textContent = health.grade ?? "Unknown";
   byId("diskTitle").textContent = `${disk.vendor || ""} ${disk.model || disk.name}`;
-  byId("diskMeta").textContent = `${disk.path} · ${formatBytes(disk.size_bytes)} · ${disk.serial || "ohne Seriennummer"}`;
+  byId("diskMeta").textContent = `${disk.path} · ${formatBytes(disk.size_bytes)} · ${disk.serial || "no serial"}`;
 
   const notes = byId("healthNotes");
   notes.innerHTML = "";
@@ -306,22 +479,43 @@ function renderHealth(health, disk) {
 function renderEraseOptions(disk, erase) {
   state.secureErase = erase;
   const hint = byId("secureEraseHint");
-  const button = byId("secureEraseButton");
+  const basicButton = byId("secureEraseButton");
+  const enhancedButton = byId("enhancedSecureEraseButton");
   const internalGuard = disk.internal && !state.settings.allowInternalErase
-    ? "Interne Laufwerke erst explizit fuer Loeschvorgaenge freigeben."
+    ? "Explicitly allow internal drives before using erase functions."
     : null;
 
   if (internalGuard) {
     hint.textContent = internalGuard;
-    button.disabled = true;
+    basicButton.disabled = true;
+    enhancedButton.disabled = true;
   } else if (erase?.supported) {
-    hint.textContent = `ATA Secure Erase verfuegbar (${erase.method === "enhanced" ? "enhanced" : "basic"}).`;
-    button.disabled = !state.settings.enableDestructive;
+    const methods = [];
+    if (erase.basic_supported) methods.push("basic");
+    if (erase.enhanced_supported) methods.push("enhanced");
+    hint.textContent = `ATA Secure Erase available: ${methods.join(", ")}.`;
+    basicButton.disabled = !state.settings.enableDestructive || !erase.basic_supported;
+    enhancedButton.disabled = !state.settings.enableDestructive || !erase.enhanced_supported;
   } else {
-    hint.textContent = erase?.reason || "ATA Secure Erase nicht verfuegbar.";
-    button.disabled = true;
+    hint.textContent = erase?.reason || "ATA Secure Erase not available.";
+    basicButton.disabled = true;
+    enhancedButton.disabled = true;
   }
   byId("eraseConfirmInput").value = "";
+}
+
+function renderNvmeEraseOptions(nvmeErase) {
+  state.nvmeErase = nvmeErase;
+  const hint = byId("nvmeEraseHint");
+  const button = byId("nvmeEraseButton");
+  if (!hint || !button) return;
+  if (nvmeErase?.supported) {
+    hint.textContent = "NVMe sanitize/format support detected.";
+    button.disabled = !state.settings.enableDestructive;
+  } else {
+    hint.textContent = nvmeErase?.reason || "NVMe sanitize/format is not available for this drive.";
+    button.disabled = true;
+  }
 }
 
 function renderExternalSelftest(selftest) {
@@ -336,7 +530,7 @@ function renderExternalSelftest(selftest) {
       return;
     }
     box.classList.remove("hidden");
-    const prefix = "Externer SMART Self-Test laeuft";
+    const prefix = "External SMART self-test running";
     box.textContent = `${prefix} · ${selftest.status_text}`;
     button.classList.toggle("hidden", !selftest.abort_supported);
   } else {
@@ -348,22 +542,27 @@ function renderExternalSelftest(selftest) {
 
 function renderOverview(disk, overview, health) {
   const items = [
-    [OVERVIEW_LABELS.summary, health.summary || "n/a"],
-    [OVERVIEW_LABELS.kind, disk.kind || "unknown"],
-    [OVERVIEW_LABELS.interface, overview?.interface || disk.transport || "unknown"],
-    [OVERVIEW_LABELS.capacity, formatBytes(disk.size_bytes)],
-    [OVERVIEW_LABELS.serial, overview?.serial || disk.serial || "n/a"],
-    [OVERVIEW_LABELS.powerOnHours, overview?.power_on_hours || "n/a"],
-    [OVERVIEW_LABELS.temperature, overview?.temperature_c || "n/a"],
-    [OVERVIEW_LABELS.reallocated, overview?.reallocated || "0"],
-    [OVERVIEW_LABELS.pending, overview?.pending || "0"],
-    [OVERVIEW_LABELS.offlineUncorrectable, overview?.offline_uncorrectable || "0"],
-    [OVERVIEW_LABELS.crcErrors, overview?.crc_errors || "0"],
-    [OVERVIEW_LABELS.mediaErrors, overview?.media_errors || "n/a"],
+    { label: OVERVIEW_LABELS.summary, value: health.summary || "n/a", wide: true },
+    { label: OVERVIEW_LABELS.kind, value: disk.kind || "unknown" },
+    { label: OVERVIEW_LABELS.interface, value: overview?.interface || disk.transport || "unknown" },
+    { label: OVERVIEW_LABELS.capacity, value: formatBytes(disk.size_bytes) },
+    { label: OVERVIEW_LABELS.serial, value: overview?.serial || disk.serial || "n/a", wide: true, wrap: true },
+    { label: OVERVIEW_LABELS.powerOnHours, value: overview?.power_on_hours || "n/a" },
+    { label: OVERVIEW_LABELS.temperature, value: overview?.temperature_c || "n/a" },
+    { label: OVERVIEW_LABELS.reallocated, value: overview?.reallocated || "0" },
+    { label: OVERVIEW_LABELS.pending, value: overview?.pending || "0" },
+    { label: OVERVIEW_LABELS.offlineUncorrectable, value: overview?.offline_uncorrectable || "0" },
+    { label: OVERVIEW_LABELS.crcErrors, value: overview?.crc_errors || "0" },
+    { label: OVERVIEW_LABELS.mediaErrors, value: overview?.media_errors || "n/a" },
   ];
 
   byId("overviewGrid").innerHTML = items
-    .map(([label, value]) => `<div class="info-cell"><span>${label}</span><strong>${value}</strong></div>`)
+    .map(({ label, value, wide, wrap }) => `
+      <div class="info-cell${wide ? " wide" : ""}">
+        <span>${label}</span>
+        <strong class="${wrap ? "wrap-value" : ""}">${value}</strong>
+      </div>
+    `)
     .join("");
 }
 
@@ -372,14 +571,14 @@ function renderSmart(smart) {
   const table = byId("smartTable");
 
   if (!smart.available) {
-    badge.textContent = "Nicht verfuegbar";
-    table.innerHTML = `<p class="muted">${smart.error || "SMART nicht verfuegbar"}</p>`;
+    badge.textContent = "Unavailable";
+    table.innerHTML = `<p class="muted">${smart.error || "SMART unavailable"}</p>`;
     if (state.smartChart) state.smartChart.destroy();
     return;
   }
 
   if (smart.error && !smart.payload) {
-    badge.textContent = "Fehler";
+    badge.textContent = "Error";
     table.innerHTML = `<p class="muted">${smart.error}</p>`;
     if (state.smartChart) state.smartChart.destroy();
     return;
@@ -423,7 +622,7 @@ function renderSmart(smart) {
     data: {
       labels: chartRows.map((row) => row.name),
       datasets: [{
-        label: "Raw SMART Werte",
+        label: "Raw SMART values",
         data: chartRows.map((row) => Number(row.raw?.value ?? row.raw)),
         backgroundColor: chartRows.map((_, index) => palette[index % palette.length]),
       }],
@@ -445,28 +644,27 @@ async function loadReports() {
   const container = byId("reportsList");
   container.innerHTML = "";
   if (!payload.reports.length) {
-    container.innerHTML = `<div class="job-box muted">Noch keine Berichte gespeichert.</div>`;
+    container.innerHTML = `<div class="job-box muted">No reports saved yet.</div>`;
     return;
   }
   for (const report of payload.reports) {
     const item = document.createElement("div");
     item.className = "report-item";
     item.innerHTML = `
-      <a class="report-link" href="/report/${report.report_id}" target="_blank">${report.device.path} · Score ${report.health.score} · ${new Date(report.generated_at).toLocaleString()}</a>
+      <a class="report-link" href="/report/${report.report_id}">${report.device.path} · Score ${report.health.score} · ${new Date(report.generated_at).toLocaleString()}</a>
+      <div class="report-export-status ${report.export?.status === "saved" ? "ok" : report.export?.status === "error" ? "danger" : ""}">
+        ${reportExportStatus(report.export)}
+      </div>
       <div class="report-actions-inline">
-        <a class="mini-action" href="/report/${report.report_id}" target="_blank">Oeffnen</a>
-        <a class="mini-action" href="/report/${report.report_id}" target="_blank" data-action="pdf">PDF</a>
-        <button class="mini-action danger" type="button" data-action="delete">Loeschen</button>
+        <a class="mini-action" href="/report/${report.report_id}">Open</a>
+        <a class="mini-action" href="/certificate/${report.report_id}">Certificate</a>
+        <a class="mini-action" href="/report/${report.report_id}/pdf">PDF</a>
+        <button class="mini-action danger" type="button" data-action="delete">Delete</button>
       </div>
     `;
 
-    item.querySelector('[data-action="pdf"]').onclick = (event) => {
-      event.preventDefault();
-      window.open(`/report/${report.report_id}`, "_blank", "noopener,noreferrer");
-    };
-
     item.querySelector('[data-action="delete"]').onclick = async () => {
-      const confirmed = window.confirm(`Bericht ${report.report_id} wirklich loeschen?`);
+      const confirmed = window.confirm(`Delete report ${report.report_id}?`);
       if (!confirmed) return;
       try {
         await fetchJson(`/api/reports/${report.report_id}`, { method: "DELETE" });
@@ -513,15 +711,15 @@ function renderSelectedJobStatus(job) {
   if (!job) {
     const lastDoneJob = getLatestCompletedSelectedJob();
     if (lastDoneJob?.result?.report_id) {
-      setJobProgress(100, MODE_LABELS[lastDoneJob.mode] || "Letzter Test");
-      byId("jobStatus").innerHTML = `abgeschlossen · <a href="/report/${lastDoneJob.result.report_id}" target="_blank">Letzten Bericht oeffnen</a>`;
+      setJobProgress(100, MODE_LABELS[lastDoneJob.mode] || "Latest Test");
+      byId("jobStatus").innerHTML = `done · ${reportExportStatus(lastDoneJob.result.export)} · <a href="/report/${lastDoneJob.result.report_id}">Open latest report</a>`;
     } else {
-      setJobProgress(0, "Aktiver Test");
-      byId("jobStatus").textContent = "Noch kein Test gestartet.";
+      setJobProgress(0, "Active Test");
+      byId("jobStatus").textContent = "No test started yet.";
     }
     if (state.selftest?.running) {
-      const prefix = state.selftest.source === "app" ? "SMART Self-Test" : "Externer SMART Self-Test";
-      byId("jobStatus").textContent = `Kein App-Test aktiv · ${prefix}: ${state.selftest.status_text}`;
+      const prefix = state.selftest.source === "app" ? "SMART self-test" : "External SMART self-test";
+      byId("jobStatus").textContent = `No app test active · ${prefix}: ${state.selftest.status_text}`;
       setJobProgress(100 - (state.selftest.remaining_percent ?? 100), prefix);
     }
     return;
@@ -536,7 +734,7 @@ function renderActiveJobs() {
   const container = byId("activeJobsList");
   container.innerHTML = "";
   if (!state.activeJobs.length) {
-    container.innerHTML = `<div class="job-box muted">Keine weiteren laufenden Jobs.</div>`;
+    container.innerHTML = `<div class="job-box muted">No other running jobs.</div>`;
     return;
   }
 
@@ -563,7 +761,7 @@ function renderActiveJobs() {
   });
 
   if (!container.children.length) {
-    container.innerHTML = `<div class="job-box muted">Keine weiteren laufenden Jobs.</div>`;
+    container.innerHTML = `<div class="job-box muted">No other running jobs.</div>`;
   }
 }
 
@@ -605,6 +803,7 @@ async function selectDisk(name) {
   renderHealth(payload.health, payload.disk);
   renderModeSelector(payload.modes || payload.disk.modes || []);
   renderEraseOptions(payload.disk, payload.erase);
+  renderNvmeEraseOptions(payload.nvme_erase);
   renderExternalSelftest(payload.selftest);
   renderOverview(payload.disk, payload.overview, payload.health);
   renderSmart(payload.smart);
@@ -619,18 +818,24 @@ async function selectDisk(name) {
 async function refreshDisks() {
   const payload = await fetchJson("/api/disks");
   state.disks = payload.disks;
+  const knownNames = new Set(state.disks.map((disk) => disk.name));
+  state.selectedDiskNames = new Set([...state.selectedDiskNames].filter((name) => knownNames.has(name)));
+  persistBatchSelection();
   byId("envHint").textContent = payload.smartctl_available
-    ? "SMART verfuegbar"
-    : "SMART fehlt: smartmontools installieren";
+    ? "SMART available"
+    : "SMART missing: install smartmontools";
   renderDiskList();
   await loadReports();
 
+  const visible = visibleDisks();
   const stored = localStorage.getItem("selectedDiskName");
-  const stillVisible = visibleDisks().some((disk) => disk.name === stored);
+  const stillVisible = visible.some((disk) => disk.name === stored);
   if (stored && stillVisible) {
     await selectDisk(stored);
-  } else if (state.selectedDisk && visibleDisks().some((disk) => disk.name === state.selectedDisk.name)) {
+  } else if (state.selectedDisk && visible.some((disk) => disk.name === state.selectedDisk.name)) {
     await selectDisk(state.selectedDisk.name);
+  } else if (visible.length) {
+    await selectDisk(visible[0].name);
   } else {
     state.selectedDisk = null;
     byId("detailView").classList.add("hidden");
@@ -639,15 +844,36 @@ async function refreshDisks() {
 }
 
 async function startTest() {
-  if (!state.selectedDisk || getSelectedAppJob()) return;
-  const payload = await fetchJson("/api/tests", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ device: state.selectedDisk.name, mode: state.selectedMode }),
-  });
-  state.currentJobId = payload.job_id;
+  const targets = testTargetDisks().filter((disk) => !hasAppJob(disk.name));
+  if (!targets.length) return;
+
+  const started = [];
+  const failed = [];
+  for (const disk of targets) {
+    try {
+      const payload = await fetchJson("/api/tests", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ device: disk.name, mode: state.selectedMode, compliance_profile: state.selectedComplianceProfile }),
+      });
+      started.push({ disk, jobId: payload.job_id });
+    } catch (error) {
+      failed.push(`${disk.name}: ${error.message}`);
+    }
+  }
+
+  const selectedStarted = started.find((item) => item.disk.name === state.selectedDisk?.name) || started[0];
+  if (selectedStarted) {
+    state.currentJobId = selectedStarted.jobId;
+  }
   await refreshActiveJobs();
-  pollSelectedJob();
+  if (state.currentJobId) pollSelectedJob();
+  if (started.length || failed.length) {
+    const parts = [];
+    if (started.length) parts.push(`started ${started.length} test${started.length === 1 ? "" : "s"}`);
+    if (failed.length) parts.push(`failed: ${failed.join("; ")}`);
+    byId("jobStatus").textContent = parts.join(" · ");
+  }
 }
 
 async function pollSelectedJob() {
@@ -662,7 +888,7 @@ async function pollSelectedJob() {
   setJobProgress(percent, MODE_LABELS[payload.mode] || "Test");
 
   if (payload.status === "done") {
-    byId("jobStatus").innerHTML = `done · <a href="/report/${payload.result.report_id}" target="_blank">Bericht oeffnen</a>`;
+    byId("jobStatus").innerHTML = `done · ${reportExportStatus(payload.result.export)} · <a href="/report/${payload.result.report_id}">Open report</a>`;
     setJobProgress(100, MODE_LABELS[payload.mode] || "Test");
     state.currentJobId = null;
     state.pollTimer = null;
@@ -713,7 +939,7 @@ async function abortExternalSelftest() {
       method: "POST",
     });
     renderExternalSelftest(payload.status);
-    byId("jobStatus").textContent = "SMART Self-Test abgebrochen.";
+    byId("jobStatus").textContent = "SMART self-test aborted.";
     setJobProgress(0, "SMART");
     await refreshActiveJobs();
     setControlsBusy();
@@ -729,20 +955,20 @@ async function eraseSelectedDisk() {
   const payload = await fetchJson(`/api/disks/${state.selectedDisk.name}/erase`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ confirmation, allow_internal: state.settings.allowInternalErase }),
+    body: JSON.stringify({ confirmation, allow_internal: state.settings.allowInternalErase, compliance_profile: state.selectedComplianceProfile }),
   });
   state.currentJobId = payload.job_id;
   await refreshActiveJobs();
   pollSelectedJob();
 }
 
-async function secureEraseSelectedDisk() {
+async function secureEraseSelectedDisk(method = "basic") {
   if (!state.selectedDisk) return;
   const confirmation = byId("eraseConfirmInput").value.trim();
   const payload = await fetchJson(`/api/disks/${state.selectedDisk.name}/secure-erase`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ confirmation, allow_internal: state.settings.allowInternalErase }),
+    body: JSON.stringify({ confirmation, allow_internal: state.settings.allowInternalErase, method, compliance_profile: state.selectedComplianceProfile }),
   });
   state.currentJobId = payload.job_id;
   await refreshActiveJobs();
@@ -750,6 +976,11 @@ async function secureEraseSelectedDisk() {
 }
 
 function bindSettings() {
+  byId("complianceProfile").onchange = (event) => {
+    state.selectedComplianceProfile = event.target.value;
+    localStorage.setItem("complianceProfile", state.selectedComplianceProfile);
+    updateComplianceHint();
+  };
   byId("showInternalDisks").onchange = async (event) => {
     state.settings.showInternalDisks = event.target.checked;
     persistSettings();
@@ -767,6 +998,7 @@ function bindSettings() {
     if (state.selectedDisk) {
       const payload = await fetchJson(`/api/disks/${state.selectedDisk.name}`);
       renderEraseOptions(payload.disk, payload.erase);
+      renderNvmeEraseOptions(payload.nvme_erase);
     }
     setControlsBusy();
   };
@@ -777,6 +1009,7 @@ function bindSettings() {
     if (state.selectedDisk) {
       const payload = await fetchJson(`/api/disks/${state.selectedDisk.name}`);
       renderEraseOptions(payload.disk, payload.erase);
+      renderNvmeEraseOptions(payload.nvme_erase);
     }
     setControlsBusy();
   };
@@ -785,12 +1018,15 @@ function bindSettings() {
 document.addEventListener("DOMContentLoaded", async () => {
   initTheme();
   loadSettings();
+  loadComplianceSelection();
+  loadBatchSelection();
   syncSettingsInputs();
   updateSafetyUi();
   byId("themeSystem").onclick = () => applyTheme("system");
   byId("themeDark").onclick = () => applyTheme("dark");
   byId("themeLight").onclick = () => applyTheme("light");
   byId("refreshButton").onclick = async () => {
+    await refreshEnterpriseStatus(true);
     await refreshDisks();
     await refreshActiveJobs();
   };
@@ -808,7 +1044,13 @@ document.addEventListener("DOMContentLoaded", async () => {
     byId("jobStatus").textContent = `secure erase error · ${error.message}`;
     setControlsBusy();
   });
+  byId("enhancedSecureEraseButton").onclick = () => secureEraseSelectedDisk("enhanced").catch((error) => {
+    byId("jobStatus").textContent = `enhanced secure erase error · ${error.message}`;
+    setControlsBusy();
+  });
   bindSettings();
+  await loadComplianceProfiles();
+  await refreshEnterpriseStatus();
   await refreshDisks();
   await refreshActiveJobs();
 });

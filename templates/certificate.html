@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Certificate {{ report.report_id }}</title>
+    <link rel="icon" type="image/png" href="{{ url_for('static', filename='assets/driveproof-logo.png') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=20260705-pages1">
+  </head>
+  <body class="report-body certificate-body">
+    <main class="report-page certificate-page">
+      <header class="report-sheet-header certificate-header">
+        <div class="report-brand-block">
+          <img class="report-logo" src="{{ url_for('static', filename='assets/driveproof-logo.png') }}" alt="DriveProof logo">
+          <div>
+            <p class="eyebrow">DriveProof Certificate</p>
+            <h1>{{ certificate.type }}</h1>
+            <p class="muted">Certificate ID {{ report.report_id }} | Issued {{ certificate.issued_at }}</p>
+          </div>
+        </div>
+        <div class="report-proof-block">
+          <div class="report-qr" aria-label="GitHub repository QR code">{{ github_qr_svg }}</div>
+          <div>
+            <strong>Created with DriveProof</strong>
+            <span>github.com/joreichhardt/driveproof</span>
+          </div>
+        </div>
+        <div class="report-actions">
+          <a class="icon-button legal-back-link" href="/">Back to app</a>
+          <a class="icon-button legal-back-link" href="/report/{{ report.report_id }}">Report</a>
+          <a class="icon-button legal-back-link" href="/api/certificates/{{ report.report_id }}/verify">Verify JSON</a>
+          <button class="icon-button legal-back-link" onclick="window.print()">Save as PDF</button>
+        </div>
+      </header>
+
+      <section class="certificate-hero panel inset">
+        <div>
+          <p class="eyebrow">Result</p>
+          <h2>{{ report.test.label if report.test.label else report.test.type }}</h2>
+          <p>{{ report.test.buyer_claim }}</p>
+        </div>
+        <div class="certificate-seal">
+          <span>Signed</span>
+          <strong>{{ certificate.signing_key_fingerprint }}</strong>
+        </div>
+      </section>
+
+      <section class="report-spec-grid report-spec-grid-compact">
+        <div class="report-spec"><span>Device</span><strong>{{ report.device.vendor }} {{ report.device.model }}</strong></div>
+        <div class="report-spec"><span>Serial</span><strong>{{ report.overview.serial }}</strong></div>
+        <div class="report-spec"><span>Path</span><strong>{{ report.device.path }}</strong></div>
+        <div class="report-spec"><span>Capacity</span><strong>{{ report.overview.capacity_gb }} GB</strong></div>
+        <div class="report-spec"><span>Compliance</span><strong>{{ report.compliance.label }}</strong></div>
+        <div class="report-spec"><span>Standard</span><strong>{{ report.compliance.standard }}</strong></div>
+        <div class="report-spec"><span>Health</span><strong>{{ report.health.grade }} / {{ report.health.score }}</strong></div>
+        <div class="report-spec"><span>Issuer</span><strong>{{ certificate.issuer }}</strong></div>
+      </section>
+
+      {% if report.test.erasure %}
+      <section class="panel inset report-summary-panel report-compact-panel">
+        <h2>Erasure Statement</h2>
+        <div class="report-summary-grid">
+          <div class="summary-item"><span>Method</span><strong>{{ report.test.erasure.method }}</strong></div>
+          <div class="summary-item"><span>Tool</span><strong>{{ report.test.erasure.tool }}</strong></div>
+          <div class="summary-item"><span>Started</span><strong>{{ report.test.erasure.started_at }}</strong></div>
+          <div class="summary-item"><span>Completed</span><strong>{{ report.test.erasure.completed_at }}</strong></div>
+          <div class="summary-item wide"><span>Verification</span><strong>{{ report.test.erasure.verification }}</strong></div>
+        </div>
+      </section>
+      {% endif %}
+
+      <section class="panel inset report-summary-panel report-compact-panel">
+        <h2>Cryptographic Proof</h2>
+        <div class="report-summary-grid">
+          <div class="summary-item wide"><span>Report SHA-256</span><strong class="hash-value">{{ certificate.report_sha256 }}</strong></div>
+          <div class="summary-item wide"><span>Audit Chain SHA-256</span><strong class="hash-value">{{ certificate.audit_chain_sha256 }}</strong></div>
+          <div class="summary-item wide"><span>Signature</span><strong class="hash-value">{{ certificate.signature }}</strong></div>
+          <div class="summary-item"><span>Algorithm</span><strong>{{ certificate.signature_algorithm }}</strong></div>
+          <div class="summary-item"><span>Key Fingerprint</span><strong>{{ certificate.signing_key_fingerprint }}</strong></div>
+        </div>
+        <p class="muted">{{ certificate.verification }}</p>
+      </section>
+
+      <section class="panel inset report-summary-panel report-compact-panel">
+        <h2>Audit Chain</h2>
+        <div class="certificate-chain">
+          {% for item in certificate.audit_chain %}
+          <div class="chain-row">
+            <span>{{ item.index }}</span>
+            <strong>{{ item.event.action }}</strong>
+            <code>{{ item.hash }}</code>
+          </div>
+          {% endfor %}
+        </div>
+      </section>
+
+      <p class="muted certificate-disclaimer">{{ certificate.disclaimer }}</p>
+    </main>
+  </body>
+</html>

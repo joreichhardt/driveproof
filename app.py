@@ -1,34 +1,255 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import os
 import re
+import shutil
 import sqlite3
+import tempfile
 import threading
 import time
 import uuid
+import urllib.error
+import urllib.request
+from io import BytesIO
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from flask import Flask, jsonify, render_template, request
+from flask import Flask, abort, jsonify, render_template, request, send_file
+from markupsafe import Markup
+from cryptography.exceptions import InvalidSignature
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey, Ed25519PublicKey
 
 BASE_DIR = Path(__file__).resolve().parent
-REPORT_DIR = BASE_DIR / "reports"
-DB_PATH = BASE_DIR / "state.db"
+STATE_DIR = Path(os.environ.get("DRIVEPROOF_STATE_DIR", BASE_DIR))
+REPORT_DIR = STATE_DIR / "reports"
+DB_PATH = STATE_DIR / "state.db"
+SIGNING_KEY_PATH = STATE_DIR / "driveproof-signing.key"
 LEGAL_DOCS = {
     "license": BASE_DIR / "LICENSE",
     "third-party": BASE_DIR / "THIRD_PARTY_LICENSES.md",
     "commercial": BASE_DIR / "COMMERCIAL_SERVICES.md",
 }
 REPORT_DIR.mkdir(exist_ok=True)
+EXPORT_MOUNT_ROOT = Path("/run/media/driveproof")
+GITHUB_QR_PATH = BASE_DIR / "static" / "assets" / "github-qr.svg"
+PORTAL_URL = os.environ.get("DRIVEPROOF_PORTAL_URL", "").rstrip("/")
+PORTAL_TOKEN = os.environ.get("DRIVEPROOF_PORTAL_TOKEN", "")
+PORTAL_DISCOVERY_HOSTS = [
+    host.strip()
+    for host in os.environ.get(
+        "DRIVEPROOF_PORTAL_DISCOVERY_HOSTS",
+        "http://driveproof-portal.local:6060,http://driveproof-portal:6060,http://driveproof-enterprise.local:6060",
+    ).split(",")
+    if host.strip()
+]
+INSTANCE_ID_PATH = STATE_DIR / "instance-id"
+INSTANCE_NAME = os.environ.get("DRIVEPROOF_INSTANCE_NAME", "driveproof-live")
+
+COMPLIANCE_PROFILES = {
+    "resale_basic": {
+        "label": "Resale Basic",
+        "standard": "DriveProof resale workflow",
+        "description": "SMART health capture plus a selected read test. This is a resale diagnostic report, not a certified data-erasure certificate.",
+        "requires_erase": False,
+    },
+    "nist_clear": {
+        "label": "NIST SP 800-88 Clear",
+        "standard": "NIST SP 800-88 Rev. 1 Clear",
+        "description": "Maps to logical overwrite or firmware erase workflows intended for reuse within normal assurance requirements.",
+        "requires_erase": True,
+    },
+    "nist_purge": {
+        "label": "NIST SP 800-88 Purge",
+        "standard": "NIST SP 800-88 Rev. 1 Purge",
+        "description": "Maps to firmware cryptographic erase, ATA Enhanced Secure Erase, or future NVMe sanitize workflows where supported.",
+        "requires_erase": True,
+    },
+}
 
 app = Flask(__name__)
 
 
 def utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def slugify_filename_part(value: str, fallback: str = "unknown") -> str:
+    cleaned = re.sub(r"[^A-Za-z0-9._-]+", "-", (value or "").strip())
+    cleaned = cleaned.strip("._-")
+    return cleaned[:80] or fallback
+
+
+def report_filename(report: dict[str, Any]) -> str:
+    generated_at = report.get("generated_at") or utc_now_iso()
+    try:
+        stamp = datetime.fromisoformat(generated_at).strftime("%Y%m%d-%H%M%S")
+    except ValueError:
+        stamp = generated_at.replace(":", "-")
+    device = report.get("device") or {}
+    serial = device.get("serial") or device.get("wwn") or device.get("name") or "unknown"
+    model = device.get("model") or device.get("vendor") or device.get("kind") or "disk"
+    report_id = report.get("report_id") or uuid.uuid4().hex[:12]
+    return f"{stamp}_{slugify_filename_part(model)}_{slugify_filename_part(serial)}_{report_id}.json"
+
+
+def report_file_path(report_id: str, report: dict[str, Any] | None = None) -> Path:
+    legacy = REPORT_DIR / f"{report_id}.json"
+    if legacy.exists():
+        return legacy
+    matches = sorted(REPORT_DIR.glob(f"*_{report_id}.json"))
+    if matches:
+        return matches[-1]
+    if report is None:
+        return legacy
+    return REPORT_DIR / report_filename(report)
+
+
+def github_qr_inline_svg() -> Markup:
+    if not GITHUB_QR_PATH.exists():
+        return Markup("")
+    content = GITHUB_QR_PATH.read_text(encoding="utf-8")
+    match = re.search(r"(<svg\b.*</svg>)", content, re.DOTALL)
+    return Markup(match.group(1) if match else content)
+
+
+def signing_private_key() -> Ed25519PrivateKey:
+    if SIGNING_KEY_PATH.exists():
+        data = SIGNING_KEY_PATH.read_bytes()
+        if b"BEGIN PRIVATE KEY" in data:
+            return serialization.load_pem_private_key(data, password=None)
+        backup = SIGNING_KEY_PATH.with_suffix(".legacy")
+        try:
+            SIGNING_KEY_PATH.replace(backup)
+        except OSError:
+            pass
+
+    SIGNING_KEY_PATH.parent.mkdir(parents=True, exist_ok=True)
+    key = Ed25519PrivateKey.generate()
+    pem = key.private_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PrivateFormat.PKCS8,
+        encryption_algorithm=serialization.NoEncryption(),
+    )
+    SIGNING_KEY_PATH.write_bytes(pem)
+    SIGNING_KEY_PATH.chmod(0o600)
+    return key
+
+
+def signing_public_key() -> Ed25519PublicKey:
+    return signing_private_key().public_key()
+
+
+def signing_public_key_pem() -> str:
+    return signing_public_key().public_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PublicFormat.SubjectPublicKeyInfo,
+    ).decode("utf-8")
+
+
+def signing_key_fingerprint() -> str:
+    return hashlib.sha256(signing_public_key_pem().encode("utf-8")).hexdigest()[:16]
+
+
+def public_key_fingerprint(public_key_pem: str) -> str:
+    return hashlib.sha256((public_key_pem or "").encode("utf-8")).hexdigest()[:16]
+
+
+def sign_bytes(payload: bytes) -> str:
+    return signing_private_key().sign(payload).hex()
+
+
+def verify_signature(public_key_pem: str, payload: bytes, signature_hex: str) -> bool:
+    try:
+        public_key = serialization.load_pem_public_key(public_key_pem.encode("utf-8"))
+        public_key.verify(bytes.fromhex(signature_hex), payload)
+        return True
+    except (ValueError, InvalidSignature):
+        return False
+
+
+def canonical_json_bytes(payload: dict[str, Any]) -> bytes:
+    return json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")
+
+
+def report_integrity_payload(report: dict[str, Any]) -> dict[str, Any]:
+    payload = dict(report)
+    payload.pop("integrity", None)
+    payload.pop("certificate", None)
+    payload.pop("smart_rows", None)
+    payload.pop("overview", None)
+    return payload
+
+
+def report_sha256(report: dict[str, Any]) -> str:
+    return hashlib.sha256(canonical_json_bytes(report_integrity_payload(report))).hexdigest()
+
+
+def compliance_from_options(options: dict[str, Any] | None) -> dict[str, Any]:
+    key = (options or {}).get("compliance_profile") or "resale_basic"
+    profile = COMPLIANCE_PROFILES.get(key, COMPLIANCE_PROFILES["resale_basic"])
+    return {"id": key if key in COMPLIANCE_PROFILES else "resale_basic", **profile}
+
+
+def audit_event(action: str, **details: Any) -> dict[str, Any]:
+    return {
+        "timestamp": utc_now_iso(),
+        "action": action,
+        "details": details,
+    }
+
+
+def audit_hash_chain(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    previous = "0" * 64
+    chained: list[dict[str, Any]] = []
+    for index, event in enumerate(events, start=1):
+        payload = {
+            "index": index,
+            "previous_hash": previous,
+            "event": event,
+        }
+        event_hash = hashlib.sha256(canonical_json_bytes(payload)).hexdigest()
+        chained.append({**payload, "hash": event_hash})
+        previous = event_hash
+    return chained
+
+
+def certificate_payload(report: dict[str, Any]) -> dict[str, Any]:
+    events = report.get("audit") or []
+    chain = audit_hash_chain(events)
+    report_hash = report_sha256(report)
+    chain_hash = chain[-1]["hash"] if chain else hashlib.sha256(b"").hexdigest()
+    signed_payload = {
+        "report_id": report.get("report_id"),
+        "report_sha256": report_hash,
+        "audit_chain_sha256": chain_hash,
+    }
+    signature = sign_bytes(canonical_json_bytes(signed_payload))
+    test = report.get("test") or {}
+    has_erasure = bool(test.get("erasure"))
+    certificate_type = "DriveProof Certificate of Erasure" if has_erasure else "DriveProof Certificate of Drive Test"
+    return {
+        "type": certificate_type,
+        "issuer": "DriveProof Local Certificate Authority",
+        "issued_at": report.get("generated_at") or utc_now_iso(),
+        "report_id": report.get("report_id"),
+        "device_serial": (report.get("device") or {}).get("serial"),
+        "device_path": (report.get("device") or {}).get("path"),
+        "report_sha256": report_hash,
+        "audit_chain_sha256": chain_hash,
+        "audit_chain": chain,
+        "signature_algorithm": "Ed25519",
+        "signature": signature,
+        "signed_payload": signed_payload,
+        "public_key_pem": signing_public_key_pem(),
+        "signing_key_fingerprint": signing_key_fingerprint(),
+        "verification": "Verify report_sha256 and audit_chain_sha256, then validate the Ed25519 signature with the embedded public key.",
+        "disclaimer": "Generated by DriveProof. This is a software-generated certificate, not third-party accreditation.",
+    }
 
 
 def db_connect() -> sqlite3.Connection:
@@ -109,7 +330,7 @@ def list_disks() -> list[dict[str, Any]]:
             "-b",
             "-J",
             "-o",
-            "NAME,PATH,SIZE,MODEL,SERIAL,TRAN,VENDOR,TYPE,ROTA,HOTPLUG,MOUNTPOINT",
+            "NAME,PATH,SIZE,MODEL,SERIAL,TRAN,VENDOR,TYPE,ROTA,HOTPLUG,MOUNTPOINT,FSTYPE,LABEL",
         ]
     )
     if rc != 0:
@@ -117,11 +338,31 @@ def list_disks() -> list[dict[str, Any]]:
 
     payload = json.loads(out)
     disks: list[dict[str, Any]] = []
+
+    def flatten(node: dict[str, Any]) -> list[dict[str, Any]]:
+        result = [node]
+        for child in node.get("children") or []:
+            result.extend(flatten(child))
+        return result
+
+    def is_boot_media(node: dict[str, Any]) -> bool:
+        nodes = flatten(node)
+        labels = {(entry.get("label") or "").strip() for entry in nodes}
+        mountpoints = {(entry.get("mountpoint") or "").strip() for entry in nodes}
+        fstypes = {(entry.get("fstype") or "").strip().lower() for entry in nodes}
+        return (
+            "DRVPROOF" in labels
+            or "/iso" in mountpoints
+            or ("iso9660" in fstypes and "nixos-24.11-x86_64" in labels)
+        )
+
     for item in payload.get("blockdevices", []):
         if item.get("type") != "disk":
             continue
         name = item.get("name") or ""
-        if name.startswith(("loop", "zram", "ram")):
+        if name.startswith(("loop", "zram", "ram", "fd")):
+            continue
+        if is_boot_media(item):
             continue
         disks.append(
             {
@@ -143,6 +384,528 @@ def list_disks() -> list[dict[str, Any]]:
     return disks
 
 
+def list_export_targets() -> list[dict[str, Any]]:
+    ensure_export_partition_mounted()
+    rc, out, err = run_command(
+        [
+            "lsblk",
+            "-b",
+            "-J",
+            "-o",
+            "NAME,PATH,SIZE,MODEL,SERIAL,TRAN,VENDOR,TYPE,HOTPLUG,MOUNTPOINT,FSTYPE,LABEL,RM",
+        ]
+    )
+    if rc != 0:
+        raise RuntimeError(err.strip() or "lsblk failed")
+
+    allowed_fs = {"vfat", "exfat", "msdos"}
+    payload = json.loads(out)
+    targets: list[dict[str, Any]] = []
+    for item in payload.get("blockdevices", []):
+        stack = [item]
+        while stack:
+            current = stack.pop()
+            stack.extend(current.get("children") or [])
+            mountpoint = current.get("mountpoint")
+            fstype = (current.get("fstype") or "").lower()
+            if not mountpoint or fstype not in allowed_fs:
+                continue
+            mount = Path(mountpoint)
+            if not mount.exists() or not os.access(mount, os.W_OK):
+                continue
+            label = (current.get("label") or current.get("name") or mount.name or "EXPORT").strip()
+            targets.append(
+                {
+                    "id": mountpoint,
+                    "mountpoint": mountpoint,
+                    "label": label,
+                    "fstype": fstype,
+                    "size_bytes": int(current.get("size") or 0),
+                    "path": current.get("path"),
+                    "removable": bool(current.get("rm")) or bool(current.get("hotplug")),
+                }
+            )
+    targets.sort(key=lambda item: (not item["removable"], item["label"].lower(), item["mountpoint"]))
+    return targets
+
+
+def ensure_export_partition_mounted() -> None:
+    rc, out, _err = run_command(
+        [
+            "lsblk",
+            "-b",
+            "-J",
+            "-o",
+            "NAME,PATH,SIZE,TYPE,MOUNTPOINT,FSTYPE,LABEL,RM,HOTPLUG",
+        ]
+    )
+    if rc != 0:
+        return
+
+    payload = json.loads(out)
+    candidates: list[dict[str, Any]] = []
+
+    def walk(node: dict[str, Any]) -> None:
+        fstype = (node.get("fstype") or "").lower()
+        label = (node.get("label") or "").strip()
+        if node.get("type") == "part" and fstype in {"vfat", "exfat", "msdos"}:
+            candidates.append(node)
+        for child in node.get("children") or []:
+            walk(child)
+
+    for item in payload.get("blockdevices", []):
+        walk(item)
+
+    candidates.sort(
+        key=lambda item: (
+            (item.get("label") or "").strip() != "DRVPROOF",
+            not (bool(item.get("rm")) or bool(item.get("hotplug"))),
+            item.get("path") or "",
+        )
+    )
+
+    for item in candidates:
+        if item.get("mountpoint"):
+            continue
+        label = slugify_filename_part(item.get("label") or item.get("name") or "EXPORT")
+        mountpoint = EXPORT_MOUNT_ROOT / label
+        try:
+            mountpoint.mkdir(parents=True, exist_ok=True)
+            rc, _out, _err = run_command(
+                ["mount", "-o", "rw,umask=000", item["path"], str(mountpoint)],
+                timeout=20,
+            )
+            if rc == 0:
+                return
+        except Exception:
+            continue
+
+
+def find_export_target(mountpoint: str) -> dict[str, Any]:
+    for target in list_export_targets():
+        if target["mountpoint"] == mountpoint:
+            return target
+    raise FileNotFoundError(f"Export target not found or not writable: {mountpoint}")
+
+
+def default_export_target() -> dict[str, Any]:
+    targets = list_export_targets()
+    if not targets:
+        raise FileNotFoundError("No writable FAT/exFAT export partition found.")
+    for target in targets:
+        if target["label"] == "DRVPROOF":
+            return target
+    for target in targets:
+        if target["removable"]:
+            return target
+    return targets[0]
+
+
+def chrome_binary() -> str | None:
+    for name in ("chromium", "chromium-browser", "google-chrome", "chrome"):
+        path = shutil.which(name)
+        if path:
+            return path
+    return None
+
+
+def render_report_pdf_to_path(report_id: str, pdf_path: Path) -> None:
+    pdf_engine = chrome_binary()
+    if not pdf_engine:
+        raise RuntimeError("No Chromium or Chrome binary found for PDF export.")
+
+    url = f"http://127.0.0.1:5055/report/{report_id}"
+    rc, out, err = run_command(
+        [
+            pdf_engine,
+            "--headless",
+            "--disable-gpu",
+            "--no-sandbox",
+            "--run-all-compositor-stages-before-draw",
+            "--virtual-time-budget=1500",
+            f"--print-to-pdf={pdf_path}",
+            url,
+        ],
+        timeout=180,
+    )
+    if rc != 0 or not pdf_path.exists():
+        raise RuntimeError(err.strip() or out.strip() or "PDF export failed.")
+
+
+def export_report_pdf(report_id: str, mountpoint: str | None = None) -> dict[str, Any]:
+    report = load_report(report_id)
+    target = find_export_target(mountpoint) if mountpoint else default_export_target()
+
+    export_dir = Path(target["mountpoint"]) / "DriveProof-Reports"
+    export_dir.mkdir(parents=True, exist_ok=True)
+
+    base_name = report_filename(report).removesuffix(".json")
+    bundle_dir = export_dir / base_name
+    bundle_dir.mkdir(parents=True, exist_ok=True)
+
+    pdf_path = bundle_dir / f"{base_name}.pdf"
+    json_path = bundle_dir / "report.json"
+    certificate_path = bundle_dir / "certificate.json"
+    audit_path = bundle_dir / "audit-chain.json"
+    public_key_path = bundle_dir / "public-key.pem"
+    manifest_path = bundle_dir / "manifest.json"
+    signature_path = bundle_dir / "manifest.sig"
+
+    render_report_pdf_to_path(report_id, pdf_path)
+
+    json_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
+    certificate_path.write_text(json.dumps(report.get("certificate", {}), indent=2), encoding="utf-8")
+    audit_path.write_text(json.dumps(report.get("certificate", {}).get("audit_chain", []), indent=2), encoding="utf-8")
+    public_key_path.write_text(report.get("certificate", {}).get("public_key_pem") or signing_public_key_pem(), encoding="utf-8")
+
+    def file_sha256(path: Path) -> str:
+        return hashlib.sha256(path.read_bytes()).hexdigest()
+
+    manifest = {
+        "schema": "driveproof.bundle.v1",
+        "created_at": utc_now_iso(),
+        "report_id": report_id,
+        "certificate_type": report.get("certificate", {}).get("type"),
+        "files": {
+            pdf_path.name: file_sha256(pdf_path),
+            json_path.name: file_sha256(json_path),
+            certificate_path.name: file_sha256(certificate_path),
+            audit_path.name: file_sha256(audit_path),
+            public_key_path.name: file_sha256(public_key_path),
+        },
+        "report_sha256": report.get("certificate", {}).get("report_sha256"),
+        "audit_chain_sha256": report.get("certificate", {}).get("audit_chain_sha256"),
+        "public_key_fingerprint": report.get("certificate", {}).get("signing_key_fingerprint"),
+    }
+    manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+    signature_path.write_text(sign_bytes(canonical_json_bytes(manifest)), encoding="utf-8")
+
+    return {
+        "report_id": report_id,
+        "status": "saved",
+        "message": f"Saved to {target['label']}",
+        "target": target,
+        "bundle_path": str(bundle_dir),
+        "bundle_name": bundle_dir.name,
+        "pdf_path": str(pdf_path),
+        "json_path": str(json_path),
+        "pdf_name": pdf_path.name,
+        "json_name": json_path.name,
+        "certificate_name": certificate_path.name,
+        "manifest_name": manifest_path.name,
+        "signature_name": signature_path.name,
+    }
+
+
+def update_report_export_status(report_id: str, export: dict[str, Any]) -> None:
+    path = report_file_path(report_id)
+    if not path.exists():
+        return
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    payload["export"] = export
+    path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+
+def auto_export_report_pdf(report_id: str) -> dict[str, Any]:
+    try:
+        result = export_report_pdf(report_id)
+        update_report_export_status(report_id, result)
+        return result
+    except Exception as exc:
+        result = {
+            "report_id": report_id,
+            "status": "error",
+            "message": str(exc),
+        }
+        update_report_export_status(report_id, result)
+        return result
+
+
+def verify_export_bundle(bundle_path: str) -> dict[str, Any]:
+    bundle = Path(bundle_path)
+    if not bundle.is_dir():
+        raise FileNotFoundError(f"Bundle not found: {bundle_path}")
+
+    manifest_path = bundle / "manifest.json"
+    signature_path = bundle / "manifest.sig"
+    public_key_path = bundle / "public-key.pem"
+    if not manifest_path.exists() or not signature_path.exists() or not public_key_path.exists():
+        raise FileNotFoundError("Bundle manifest, signature, or public key is missing.")
+
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    signature = signature_path.read_text(encoding="utf-8").strip()
+    public_key = public_key_path.read_text(encoding="utf-8")
+    file_checks: dict[str, bool] = {}
+    for name, expected_hash in (manifest.get("files") or {}).items():
+        file_path = bundle / name
+        file_checks[name] = file_path.exists() and hashlib.sha256(file_path.read_bytes()).hexdigest() == expected_hash
+
+    signature_valid = verify_signature(public_key, canonical_json_bytes(manifest), signature)
+    return {
+        "bundle_path": str(bundle),
+        "valid": signature_valid and all(file_checks.values()),
+        "signature_valid": signature_valid,
+        "file_checks": file_checks,
+        "manifest": manifest,
+    }
+
+
+portal_discovery_cache: dict[str, Any] = {"checked_at": 0.0, "url": None, "error": None, "last_error": None, "server": None}
+portal_discovery_lock = threading.Lock()
+portal_discovery_in_progress = False
+
+
+def check_portal_health(url: str, timeout: float = 0.75) -> tuple[bool, dict[str, Any] | None, str | None]:
+    try:
+        req = urllib.request.Request(f"{url.rstrip('/')}/api/v1/discovery", method="GET")
+        with urllib.request.urlopen(req, timeout=timeout) as response:
+            if not 200 <= response.status < 300:
+                return False, None, f"discovery returned HTTP {response.status}"
+            body = response.read().decode("utf-8")
+        payload = json.loads(body) if body else {}
+    except Exception as exc:
+        return False, None, str(exc)
+
+    license_info = payload.get("license") or {}
+    if payload.get("product") != "DriveProof Enterprise Server":
+        return False, payload, "endpoint is not a DriveProof Enterprise Server"
+    if not payload.get("enterprise_enabled"):
+        return False, payload, "enterprise mode is disabled on the server"
+    if payload.get("advertise") is False:
+        return False, payload, "server does not advertise live-client enrollment"
+    if not license_info.get("valid"):
+        return False, payload, "Enterprise Server license is missing or invalid"
+    return True, payload, None
+
+
+def discover_portal_url(force: bool = False) -> str | None:
+    now = time.time()
+    if not force and now - float(portal_discovery_cache.get("checked_at") or 0) < 30:
+        return portal_discovery_cache.get("url")
+
+    candidates = [PORTAL_URL] if PORTAL_URL else []
+    candidates.extend([url.rstrip("/") for url in PORTAL_DISCOVERY_HOSTS if url.rstrip("/") not in candidates])
+    for url in candidates:
+        ok, server, error = check_portal_health(url)
+        if ok:
+            portal_discovery_cache.update({"checked_at": now, "url": url, "error": None, "last_error": None, "server": server})
+            return url
+        if error:
+            portal_discovery_cache["last_error"] = error
+    portal_discovery_cache.update(
+        {
+            "checked_at": now,
+            "url": None,
+            "server": None,
+            "error": "No licensed Enterprise Server discovered on the network.",
+        }
+    )
+    return None
+
+
+def schedule_portal_discovery(force: bool = False) -> None:
+    global portal_discovery_in_progress
+    with portal_discovery_lock:
+        if portal_discovery_in_progress:
+            return
+        checked_at = float(portal_discovery_cache.get("checked_at") or 0)
+        if not force and checked_at and time.time() - checked_at < 60:
+            return
+        portal_discovery_in_progress = True
+
+    def worker() -> None:
+        global portal_discovery_in_progress
+        try:
+            discover_portal_url(force=True)
+        finally:
+            with portal_discovery_lock:
+                portal_discovery_in_progress = False
+
+    threading.Thread(target=worker, daemon=True).start()
+
+
+def effective_portal_url() -> str | None:
+    return discover_portal_url()
+
+
+def portal_enabled() -> bool:
+    return bool(PORTAL_TOKEN and effective_portal_url())
+
+
+def instance_id() -> str:
+    if not INSTANCE_ID_PATH.exists():
+        INSTANCE_ID_PATH.parent.mkdir(parents=True, exist_ok=True)
+        INSTANCE_ID_PATH.write_text(uuid.uuid4().hex, encoding="utf-8")
+    return INSTANCE_ID_PATH.read_text(encoding="utf-8").strip()
+
+
+def portal_request(path: str, method: str = "GET", payload: dict[str, Any] | None = None, timeout: int = 10) -> dict[str, Any]:
+    portal_url = effective_portal_url()
+    if not portal_url:
+        raise RuntimeError("No Enterprise Server discovered.")
+    data = None
+    headers = {"Authorization": f"Bearer {PORTAL_TOKEN}"}
+    if payload is not None:
+        data = json.dumps(payload).encode("utf-8")
+        headers["Content-Type"] = "application/json"
+    req = urllib.request.Request(f"{portal_url}{path}", data=data, headers=headers, method=method)
+    with urllib.request.urlopen(req, timeout=timeout) as response:
+        body = response.read().decode("utf-8")
+    return json.loads(body) if body else {}
+
+
+def portal_snapshot() -> dict[str, Any]:
+    try:
+        disks = list_disks()
+    except Exception as exc:
+        disks = []
+        disk_error = str(exc)
+    else:
+        disk_error = None
+    return {
+        "disks": disks,
+        "active_jobs": serialized_jobs(active_only=True),
+        "disk_error": disk_error,
+    }
+
+
+def network_status() -> dict[str, Any]:
+    rc, out, err = run_command(["ip", "-j", "addr"], timeout=5)
+    addresses: list[dict[str, Any]] = []
+    if rc == 0:
+        try:
+            for iface in json.loads(out):
+                if iface.get("ifname") == "lo":
+                    continue
+                for addr in iface.get("addr_info") or []:
+                    if addr.get("family") == "inet":
+                        addresses.append({"interface": iface.get("ifname"), "address": addr.get("local"), "prefixlen": addr.get("prefixlen")})
+        except Exception:
+            pass
+    return {
+        "mode": "dhcp",
+        "addresses": addresses,
+        "error": None if rc == 0 else (err or out),
+        "configuration_available": bool(portal_discovery_cache.get("url")),
+    }
+
+
+def enterprise_status(force: bool = False) -> dict[str, Any]:
+    schedule_portal_discovery(force=force)
+    url = portal_discovery_cache.get("url")
+    if not url:
+        state = "disabled"
+        if portal_discovery_in_progress:
+            reason = "Enterprise discovery is running in the background."
+        else:
+            reason = portal_discovery_cache.get("error") or "No licensed Enterprise Server discovered on the network."
+    elif not PORTAL_TOKEN:
+        state = "available"
+        reason = "Licensed Enterprise Server discovered, but no enrollment token is configured."
+    else:
+        state = "connected"
+        reason = "Licensed Enterprise Server discovered and token configured."
+    return {
+        "state": state,
+        "portal_url": url,
+        "configured_url": PORTAL_URL or None,
+        "server": portal_discovery_cache.get("server"),
+        "token_configured": bool(PORTAL_TOKEN),
+        "reason": reason,
+        "features": {
+            "remote_management": state == "connected",
+            "server_upload": state == "connected",
+            "network_configuration": state in {"available", "connected"},
+            "destructive_remote_erase": False,
+        },
+        "network": network_status(),
+    }
+
+
+def send_portal_heartbeat() -> None:
+    payload = {
+        "id": instance_id(),
+        "name": INSTANCE_NAME,
+        "base_url": "http://127.0.0.1:5055",
+        "version": "0.0.1b-dev",
+        "status": "online",
+        "capabilities": {
+            "tests": ["quick", "deep_sample", "smart_short", "smart_extended", "full"],
+            "remote_commands": ["refresh", "start_test", "safe_remove", "export_report"],
+            "destructive_remote_commands": False,
+        },
+        "snapshot": portal_snapshot(),
+    }
+    portal_request("/api/v1/instances/heartbeat", method="POST", payload=payload)
+
+
+def complete_portal_command(command_id: str, status: str, result: Any = None, error: str | None = None) -> None:
+    try:
+        portal_request(
+            f"/api/v1/commands/{command_id}/result",
+            method="POST",
+            payload={"status": status, "result": result, "error": error},
+        )
+    except Exception:
+        pass
+
+
+def execute_portal_command(command: dict[str, Any]) -> dict[str, Any]:
+    action = command.get("action")
+    if action == "refresh":
+        return portal_snapshot()
+    if action == "start_test":
+        device = command.get("device")
+        mode = command.get("mode") or "quick"
+        if not device:
+            raise ValueError("device is required")
+        if mode not in {"quick", "deep_sample", "smart_short", "smart_extended", "full"}:
+            raise ValueError(f"remote mode not allowed: {mode}")
+        job_id = start_test_job(device, mode, {"compliance_profile": command.get("compliance_profile") or "resale_basic", "remote": True})
+        return {"job_id": job_id}
+    if action == "safe_remove":
+        device = command.get("device")
+        if not device:
+            raise ValueError("device is required")
+        return safe_remove_disk(device)
+    if action == "export_report":
+        report_id = command.get("report_id")
+        if not report_id:
+            raise ValueError("report_id is required")
+        return export_report_pdf(report_id)
+    raise ValueError(f"unsupported remote command: {action}")
+
+
+def poll_portal_commands() -> None:
+    response = portal_request(f"/api/v1/instances/{instance_id()}/commands/next")
+    command = response.get("command")
+    if not command:
+        return
+    command_id = command.pop("id")
+    try:
+        result = execute_portal_command(command)
+        complete_portal_command(command_id, "done", result=result)
+    except Exception as exc:
+        complete_portal_command(command_id, "error", error=str(exc))
+
+
+def portal_agent_loop() -> None:
+    while True:
+        try:
+            send_portal_heartbeat()
+            poll_portal_commands()
+        except Exception:
+            pass
+        time.sleep(10)
+
+
+def start_portal_agent() -> None:
+    if not portal_enabled():
+        return
+    thread = threading.Thread(target=portal_agent_loop, daemon=True)
+    thread.start()
+
+
 def get_disk(device_name: str) -> dict[str, Any]:
     for disk in list_disks():
         if disk["name"] == device_name or disk["path"] == device_name:
@@ -161,28 +924,28 @@ def classify_disk_kind(disk: dict[str, Any]) -> str:
 
 MODE_METADATA = {
     "quick": {
-        "label": "Schnelltest",
-        "hint": "Kurzer Stichproben-Lesetest fuer Vorsortierung.",
+        "label": "Quick",
+        "hint": "Short sample read test for initial sorting.",
         "destructive": False,
     },
     "deep_sample": {
-        "label": "Tiefer Lesetest",
-        "hint": "Verteilter Lesetest ueber die Platte. Fuer HDDs sinnvoller als fuer SSD/NVMe.",
+        "label": "Deep Sample",
+        "hint": "Distributed read test across the drive. More useful for HDDs than SSD/NVMe.",
         "destructive": False,
     },
     "smart_short": {
-        "label": "SMART Kurztest",
-        "hint": "Kurzer Laufwerks-Selbsttest. Gut fuer SSD/NVMe und schnelle Vorpruefung.",
+        "label": "SMART Short",
+        "hint": "Short drive self-test. Good for SSD/NVMe and quick pre-checks.",
         "destructive": False,
     },
     "smart_extended": {
         "label": "SMART Extended",
-        "hint": "Echter SMART Extended Self-Test des Laufwerks. Fuer Verkauf glaubwuerdig.",
+        "hint": "Real SMART Extended self-test executed by the drive. Credible for resale.",
         "destructive": False,
     },
     "full": {
-        "label": "Vollscan",
-        "hint": "Kompletter Lesetest. Dauert lange und ist fuer den Verkauf die staerkste Lesetest-Aussage.",
+        "label": "Full Read",
+        "hint": "Full read test. Takes longer and provides the strongest read-test claim for resale.",
         "destructive": False,
     },
 }
@@ -401,8 +1164,8 @@ def external_selftest_jobs(device: str | None = None) -> list[dict[str, Any]]:
                 "created_at": row["updated_at"],
                 "status": "running",
                 "progress": (100 - int(selftest["remaining_percent"])) / 100 if isinstance(selftest.get("remaining_percent"), int) else 0.0,
-                "current_step": f"Externer SMART Self-Test: {selftest.get('status_text') or 'laeuft'}",
-                "messages": ["Von Laufwerk/Adapter gestarteter SMART Self-Test erkannt."],
+                "current_step": f"External SMART self-test: {selftest.get('status_text') or 'running'}",
+                "messages": ["SMART self-test started by drive or adapter detected."],
                 "result": {"selftest": selftest, "disk": disk},
                 "error": None,
             }
@@ -437,7 +1200,7 @@ def has_active_job_for_device(device: str) -> bool:
 def abort_smart_selftest(device_path: str) -> dict[str, Any]:
     rc, out, err = run_command(["smartctl", "-X", device_path], timeout=30)
     if rc != 0:
-        raise RuntimeError(err.strip() or out.strip() or "SMART Self-Test konnte nicht abgebrochen werden.")
+        raise RuntimeError(err.strip() or out.strip() or "Could not abort SMART self-test.")
     return get_external_selftest_status(device_path)
 
 
@@ -453,7 +1216,7 @@ def secure_erase_capabilities(disk: dict[str, Any]) -> dict[str, Any]:
         return {
             "supported": False,
             "method": None,
-            "reason": "ATA Secure Erase nicht verfuegbar. USB-Dock oder Laufwerk reicht hdparm-Informationen nicht durch.",
+            "reason": "ATA Secure Erase is not available. The USB dock or drive does not expose enough hdparm information.",
         }
 
     lower = text.lower()
@@ -461,7 +1224,7 @@ def secure_erase_capabilities(disk: dict[str, Any]) -> dict[str, Any]:
         return {
             "supported": False,
             "method": None,
-            "reason": "ATA Security-Feature-Set nicht gefunden.",
+            "reason": "ATA security feature set not found.",
         }
 
     enhanced = "supported: enhanced erase" in lower or "enhanced erase" in lower
@@ -470,13 +1233,28 @@ def secure_erase_capabilities(disk: dict[str, Any]) -> dict[str, Any]:
         return {
             "supported": False,
             "method": None,
-            "reason": "Laufwerk meldet kein ATA Secure Erase.",
+            "reason": "Drive does not report ATA Secure Erase support.",
         }
 
     return {
         "supported": True,
-        "method": "enhanced" if enhanced else "basic",
+        "method": "basic",
+        "basic_supported": basic,
+        "enhanced_supported": enhanced,
+        "methods": [method for method, enabled in (("basic", basic), ("enhanced", enhanced)) if enabled],
         "reason": None,
+    }
+
+
+def nvme_erase_capabilities(disk: dict[str, Any]) -> dict[str, Any]:
+    if disk.get("kind") != "NVMe" and (disk.get("transport") or "").lower() != "nvme":
+        return {"supported": False, "reason": "Not an NVMe drive."}
+    if not shutil.which("nvme"):
+        return {"supported": False, "reason": "nvme-cli is not installed in this image."}
+    return {
+        "supported": False,
+        "reason": "NVMe sanitize/format support is visible, but destructive execution is not enabled yet. Use SMART/read reports or an audited external NVMe erase workflow for now.",
+        "tool": "nvme-cli",
     }
 
 
@@ -501,7 +1279,7 @@ SMART_ATTRIBUTE_LABELS = {
     "Current_Pending_Sector": "Ausstehende problematische Sektoren",
     "Offline_Uncorrectable": "Nicht korrigierbare Sektoren",
     "UDMA_CRC_Error_Count": "CRC-Uebertragungsfehler",
-    "Temperature_Celsius": "Temperatur",
+    "Temperature_Celsius": "Temperature",
     "Media_Errors": "Medienfehler",
     "Unsafe_Shutdowns": "Unsichere Abschaltungen",
     "Percentage_Used": "Abnutzung",
@@ -672,6 +1450,23 @@ def enrich_report(report: dict[str, Any]) -> dict[str, Any]:
     payload = report.get("smart", {}).get("payload") or {}
     report["smart_rows"] = report.get("smart_rows") or normalized_smart_rows(payload)
     report["overview"] = smart_overview(report.get("smart", {}), report.get("device", {}))
+    report.setdefault("compliance", compliance_from_options(report.get("source_job", {}).get("options", {})))
+    report.setdefault(
+        "audit",
+        [
+            {
+                "timestamp": report.get("generated_at") or "unknown",
+                "action": "legacy_report_loaded",
+                "details": {"reason": "Report was created before signed audit-chain support existed."},
+            }
+        ],
+    )
+    report["integrity"] = {
+        "algorithm": "SHA-256",
+        "canonical_scope": "report JSON excluding integrity, certificate, derived overview, and rendered SMART rows",
+        "sha256": report_sha256(report),
+    }
+    report["certificate"] = certificate_payload(report)
     return report
 
 
@@ -687,13 +1482,13 @@ def verkoop_summary(report: dict[str, Any]) -> dict[str, str]:
     if pending or reallocated or offline or score < 60:
         verdict = "Nur mit deutlichem Hinweis verkaufen"
     elif score >= 85 and test.get("credibility_level") in {"high", "very_high"}:
-        verdict = "Gut verkaufbar"
+        verdict = "Good for resale"
     else:
-        verdict = "Verkaufbar mit normalem Hinweis"
+        verdict = "Sell with normal disclosure"
 
     return {
         "verdict": verdict,
-        "test_claim": test.get("buyer_claim", "Keine verkaeufergeeignete Testaussage hinterlegt."),
+        "test_claim": test.get("buyer_claim", "No resale-oriented test statement recorded."),
     }
 
 
@@ -722,7 +1517,22 @@ def build_report_payload(
             "status": source_job.status,
             "progress": source_job.progress,
             "current_step": source_job.current_step,
+            "options": source_job.options,
         }
+    report["compliance"] = compliance_from_options(source_job.options if source_job else {})
+    report["audit"] = [
+        audit_event(
+            "report_created",
+            device=disk.get("path"),
+            serial=disk.get("serial"),
+            mode=test_result.get("type"),
+            compliance=report["compliance"]["id"],
+        )
+    ]
+    if test_result.get("actions"):
+        report["audit"].append(audit_event("pre_erase_device_actions", actions=test_result.get("actions")))
+    if test_result.get("erasure"):
+        report["audit"].append(audit_event("erase_completed", erasure=test_result.get("erasure")))
     report["sales_summary"] = verkoop_summary(enrich_report(report))
     return report
 
@@ -740,9 +1550,9 @@ def finalize_smart_job_report(job: TestJob, disk: dict[str, Any]) -> TestJob:
         "label": label,
         "credibility_level": "high" if variant == "short" else "very_high",
         "buyer_claim": (
-            "Der vom Laufwerk selbst ausgefuehrte SMART Short Self-Test wurde abgeschlossen."
+            "The SMART Short self-test executed by the drive completed successfully."
             if variant == "short"
-            else "Der vom Laufwerk selbst ausgefuehrte SMART Extended Self-Test wurde abgeschlossen."
+            else "The SMART Extended self-test executed by the drive completed successfully."
         ),
         "duration_s": None,
         "polling_minutes": payload.get("ata_smart_data", {}).get("self_test", {}).get("polling_minutes", {}).get(variant),
@@ -750,15 +1560,18 @@ def finalize_smart_job_report(job: TestJob, disk: dict[str, Any]) -> TestJob:
         "smart_passed": payload.get("smart_status", {}).get("passed"),
         "log_entry": latest,
     }
-    report = build_report_payload(disk, smart, health, test_result, source_job=job)
-    report_id = save_report(report)
     job.progress = 1.0
     job.status = "done"
-    job.current_step = "Fertig"
+    job.current_step = "Done"
     job.error = None
-    if "Test abgeschlossen" not in job.messages:
-        job.messages.append("Test abgeschlossen")
-    job.result = {"report_id": report_id, "report": report}
+    if "Test completed" not in job.messages:
+        job.messages.append("Test completed")
+    report = build_report_payload(disk, smart, health, test_result, source_job=job)
+    report_id = save_report(report)
+    job.current_step = "Saving report to export partition"
+    save_job(job)
+    export = auto_export_report_pdf(report_id)
+    job.result = {"report_id": report_id, "report": report, "export": export}
     save_job(job)
     return job
 
@@ -770,9 +1583,9 @@ def compute_health(disk: dict[str, Any], smart: dict[str, Any]) -> dict[str, Any
     if not smart.get("available"):
         return {
             "score": 45,
-            "grade": "Eingeschraenkt",
-            "summary": "SMART-Daten fehlen",
-            "notes": [smart.get("error") or "SMART nicht verfuegbar"],
+            "grade": "Limited",
+            "summary": "SMART data unavailable",
+            "notes": [smart.get("error") or "SMART unavailable"],
         }
 
     payload = smart.get("payload") or {}
@@ -799,48 +1612,48 @@ def compute_health(disk: dict[str, Any], smart: dict[str, Any]) -> dict[str, Any
     passed = payload.get("smart_status", {}).get("passed")
     if passed is False:
         score -= 50
-        notes.append("SMART Gesamtstatus meldet Fehler.")
+        notes.append("SMART overall status reports a failure.")
 
     if reallocated > 0:
         score -= min(35, 10 + reallocated)
-        notes.append(f"Neu zugewiesene Sektoren: {reallocated}.")
+        notes.append(f"Reallocated sectors: {reallocated}.")
     if pending > 0:
         score -= min(30, 12 + pending * 2)
-        notes.append(f"Ausstehende fehlerhafte Sektoren: {pending}.")
+        notes.append(f"Pending bad sectors: {pending}.")
     if offline_uncorrectable > 0:
         score -= min(25, 10 + offline_uncorrectable * 2)
-        notes.append(f"Nicht korrigierbare Offline-Fehler: {offline_uncorrectable}.")
+        notes.append(f"Offline uncorrectable errors: {offline_uncorrectable}.")
     if udma_crc > 0:
         score -= min(10, udma_crc)
-        notes.append(f"CRC-Fehler im Uebertragungsweg: {udma_crc}.")
+        notes.append(f"CRC errors on the transfer path: {udma_crc}.")
     if hours > 30000:
         score -= 12
-        notes.append(f"Hohe Laufzeit: {hours} Stunden.")
+        notes.append(f"High power-on time: {hours} hours.")
     elif hours > 15000:
         score -= 6
-        notes.append(f"Erhoehte Laufzeit: {hours} Stunden.")
+        notes.append(f"Elevated power-on time: {hours} hours.")
     if start_stop > 20000:
         score -= 5
-        notes.append(f"Viele Start/Stopp-Zyklen: {start_stop}.")
+        notes.append(f"Many start/stop cycles: {start_stop}.")
     if temp and isinstance(temp, (int, float)) and temp >= 50:
         score -= 8
-        notes.append(f"Hohe Temperatur beobachtet: {temp} °C.")
+        notes.append(f"High temperature observed: {temp} °C.")
 
     score = max(0, min(100, score))
     if score >= 90:
-        grade = "Sehr gut"
+        grade = "Excellent"
     elif score >= 75:
-        grade = "Gut"
+        grade = "Good"
     elif score >= 60:
-        grade = "Ordentlich"
+        grade = "Fair"
     elif score >= 40:
-        grade = "Risikobehaftet"
+        grade = "Risky"
     else:
-        grade = "Problematisch"
+        grade = "Problematic"
 
-    summary = "Verkaufsgeeignet" if score >= 75 else "Nur mit deutlichem Hinweis verkaufen"
+    summary = "Resale ready" if score >= 75 else "Sell only with clear disclosure"
     if not notes:
-        notes.append("Keine kritischen SMART-Auffaelligkeiten erkannt.")
+        notes.append("No critical SMART issues detected.")
 
     return {
         "score": score,
@@ -852,31 +1665,33 @@ def compute_health(disk: dict[str, Any], smart: dict[str, Any]) -> dict[str, Any
 
 def running_job_snapshot_test(job: TestJob, disk: dict[str, Any]) -> dict[str, Any]:
     label_map = {
-        "quick": "Laufender Stichproben-Lesetest",
-        "deep_sample": "Laufender verteilter Lesetest",
-        "smart_short": "Laufender SMART Short Self-Test",
-        "full": "Laufender vollstaendiger Lesetest",
-        "smart_extended": "Laufender SMART Extended Self-Test",
-        "erase_zero": "Laufendes Nullschreiben",
-        "secure_erase_ata": "Laufendes ATA Secure Erase",
+        "quick": "Running sample read test",
+        "deep_sample": "Running distributed read test",
+        "smart_short": "Running SMART Short self-test",
+        "full": "Running full read test",
+        "smart_extended": "Running SMART Extended self-test",
+        "erase_zero": "Running zero erase",
+        "secure_erase_ata": "Running ATA Secure Erase",
+        "secure_erase_ata_enhanced": "Running ATA Enhanced Secure Erase",
     }
     claim_map = {
-        "quick": "Der Stichproben-Lesetest laeuft noch. Dieser Bericht zeigt nur einen Zwischenstand.",
-        "deep_sample": "Der verteilte Lesetest laeuft noch. Dieser Bericht zeigt nur einen Zwischenstand.",
-        "smart_short": "Der SMART Short Self-Test laeuft noch. Dieser Bericht zeigt nur einen Zwischenstand.",
-        "full": "Der vollstaendige Lesetest laeuft noch. Dieser Bericht zeigt nur einen Zwischenstand.",
-        "smart_extended": "Der SMART Extended Self-Test laeuft noch. Dieser Bericht zeigt nur einen Zwischenstand und ist kein Abschlussnachweis.",
-        "erase_zero": "Das Nullschreiben laeuft noch. Dieser Bericht zeigt nur einen Zwischenstand.",
-        "secure_erase_ata": "Das ATA Secure Erase laeuft noch. Dieser Bericht zeigt nur einen Zwischenstand.",
+        "quick": "The sample read test is still running. This report is only a snapshot.",
+        "deep_sample": "The distributed read test is still running. This report is only a snapshot.",
+        "smart_short": "The SMART Short self-test is still running. This report is only a snapshot.",
+        "full": "The full read test is still running. This report is only a snapshot.",
+        "smart_extended": "The SMART Extended self-test is still running. This report is only a snapshot and not final proof.",
+        "erase_zero": "The zero erase is still running. This report is only a snapshot.",
+        "secure_erase_ata": "The ATA Secure Erase is still running. This report is only a snapshot.",
+        "secure_erase_ata_enhanced": "The ATA Enhanced Secure Erase is still running. This report is only a snapshot.",
     }
     credibility = "low" if job.mode not in {"smart_short", "smart_extended"} else "medium"
     if job.mode in {"smart_short", "smart_extended"}:
         credibility = "medium"
     return {
         "type": f"{job.mode}_snapshot",
-        "label": label_map.get(job.mode, "Laufender Test"),
+        "label": label_map.get(job.mode, "Running test"),
         "credibility_level": credibility,
-        "buyer_claim": claim_map.get(job.mode, "Der Test laeuft noch. Dieser Bericht zeigt nur einen Zwischenstand."),
+        "buyer_claim": claim_map.get(job.mode, "The test is still running. This report is only a snapshot."),
         "status": job.status,
         "progress_percent": round((job.progress or 0.0) * 100, 1),
         "current_step": job.current_step,
@@ -993,9 +1808,9 @@ def recover_internal_smart_job(device: str, selftest: dict[str, Any]) -> TestJob
         job.status = "running"
         if isinstance(remaining, int):
             job.progress = max(0.01, min(0.99, (100 - remaining) / 100))
-            job.current_step = f"{selftest.get('status_text') or 'SMART Self-Test laeuft'} ({100 - remaining}% abgeschlossen)"
+            job.current_step = f"{selftest.get('status_text') or 'SMART self-test running'} ({100 - remaining}% complete)"
         else:
-            job.current_step = selftest.get("status_text") or "SMART Self-Test laeuft"
+            job.current_step = selftest.get("status_text") or "SMART self-test running"
         job.error = None
         if "SMART-Test nach App-Neustart wieder verbunden" not in job.messages:
             job.messages.append("SMART-Test nach App-Neustart wieder verbunden")
@@ -1070,20 +1885,69 @@ def serialized_jobs(device: str | None = None, active_only: bool = False) -> lis
 def save_report(report: dict[str, Any]) -> str:
     report = enrich_report(report)
     report_id = report["report_id"]
-    path = REPORT_DIR / f"{report_id}.json"
+    path = report_file_path(report_id, report=report)
     path.write_text(json.dumps(report, indent=2), encoding="utf-8")
     return report_id
 
 
+def import_exported_reports() -> None:
+    try:
+        targets = list_export_targets()
+    except Exception:
+        return
+
+    for target in targets:
+        report_dir = Path(target["mountpoint"]) / "DriveProof-Reports"
+        if not report_dir.is_dir():
+            continue
+        sources = list(report_dir.glob("*.json")) + list(report_dir.glob("*/report.json"))
+        for source in sources:
+            try:
+                payload = json.loads(source.read_text(encoding="utf-8"))
+                report_id = payload.get("report_id")
+                if not report_id:
+                    continue
+                destination = report_file_path(report_id, report=payload)
+                if destination.exists():
+                    continue
+                payload.setdefault(
+                    "export",
+                    {
+                        "report_id": report_id,
+                        "status": "saved",
+                        "message": f"Loaded from {target['label']}",
+                        "target": target,
+                        "json_path": str(source),
+                        "json_name": source.name,
+                    },
+                )
+                save_report(payload)
+            except Exception:
+                continue
+
+
 def load_report(report_id: str) -> dict[str, Any]:
-    path = REPORT_DIR / f"{report_id}.json"
+    path = report_file_path(report_id)
     if not path.exists():
         raise FileNotFoundError(report_id)
-    return enrich_report(json.loads(path.read_text(encoding="utf-8")))
+    raw = json.loads(path.read_text(encoding="utf-8"))
+    original = json.loads(json.dumps(raw))
+    enriched = enrich_report(raw)
+    if (
+        raw.get("certificate") != enriched.get("certificate")
+        or raw.get("integrity") != enriched.get("integrity")
+        or original.get("certificate") != enriched.get("certificate")
+        or original.get("integrity") != enriched.get("integrity")
+    ):
+        try:
+            path.write_text(json.dumps(enriched, indent=2), encoding="utf-8")
+        except OSError:
+            pass
+    return enriched
 
 
 def delete_report(report_id: str) -> None:
-    path = REPORT_DIR / f"{report_id}.json"
+    path = report_file_path(report_id)
     if not path.exists():
         raise FileNotFoundError(report_id)
     path.unlink()
@@ -1092,6 +1956,17 @@ def delete_report(report_id: str) -> None:
 def persist_job_state(job: TestJob) -> None:
     with jobs_lock:
         save_job(job)
+
+
+def start_test_job(device: str, mode: str, options: dict[str, Any] | None = None) -> str:
+    job_id = uuid.uuid4().hex[:12]
+    job = TestJob(id=job_id, device=device, mode=mode, created_at=utc_now_iso(), options=options or {})
+    with jobs_lock:
+        jobs[job_id] = job
+    save_job(job)
+    thread = threading.Thread(target=run_test_job, args=(job_id,), daemon=True)
+    thread.start()
+    return job_id
 
 
 def sample_offsets(size_bytes: int, mode: str) -> list[tuple[int, int]]:
@@ -1145,7 +2020,7 @@ def read_segments(device_path: str, ranges: list[tuple[int, int]], job: TestJob)
         "type": "sample_read",
         "label": "Stichproben-Lesetest" if len(ranges) <= 3 else "Verteilter Lesetest",
         "credibility_level": "medium" if len(ranges) <= 3 else "high",
-        "buyer_claim": "Mehrere verteilte Bereiche der Platte wurden erfolgreich lesend geprueft." if len(ranges) > 3 else "Mehrere Stichprobenbereiche der Platte wurden erfolgreich lesend geprueft.",
+        "buyer_claim": "Multiple distributed areas of the drive were read successfully." if len(ranges) > 3 else "Multiple sample areas of the drive were read successfully.",
         "segments": timings,
         "average_throughput_mib_s": round(average, 2),
     }
@@ -1181,7 +2056,7 @@ def full_read_scan(device_path: str, size_bytes: int, job: TestJob) -> dict[str,
         "type": "full_read",
         "label": "Vollstaendiger Lesetest",
         "credibility_level": "very_high",
-        "buyer_claim": "Die komplette Platte wurde sequenziell lesend geprueft.",
+        "buyer_claim": "The full drive was verified with a sequential read pass.",
         "bytes_read": read_bytes,
         "duration_s": round(duration, 2),
         "average_throughput_mib_s": round(read_bytes / duration / (1024 * 1024), 2),
@@ -1192,11 +2067,11 @@ def full_read_scan(device_path: str, size_bytes: int, job: TestJob) -> dict[str,
 def run_smart_extended_test(device_path: str, job: TestJob) -> dict[str, Any]:
     caps = smart_selftest_capabilities(device_path)
     if not caps.get("supported"):
-        raise RuntimeError("SMART Extended Self-Test wird von diesem Laufwerk oder USB-Adapter nicht unterstuetzt.")
+        raise RuntimeError("SMART Extended self-test is not supported by this drive or USB adapter.")
 
     rc, out, err = run_command(["smartctl", "-t", "long", device_path], timeout=30)
     if rc not in (0,):
-        raise RuntimeError(err.strip() or out.strip() or "SMART Self-Test konnte nicht gestartet werden")
+        raise RuntimeError(err.strip() or out.strip() or "Could not start SMART self-test.")
 
     polling_minutes = caps.get("polling_minutes", {}).get("extended")
     started_at = time.time()
@@ -1205,16 +2080,16 @@ def run_smart_extended_test(device_path: str, job: TestJob) -> dict[str, Any]:
         self_test = payload.get("ata_smart_data", {}).get("self_test", {})
         status = self_test.get("status", {})
         remaining = status.get("remaining_percent")
-        string = status.get("string") or "SMART Self-Test laeuft"
+        string = status.get("string") or "SMART self-test running"
         passed = payload.get("smart_status", {}).get("passed")
         log_entries = payload.get("ata_smart_self_test_log", {}).get("standard", {}).get("table", [])
 
         if isinstance(remaining, int):
             job.progress = max(0.01, min(0.99, (100 - remaining) / 100))
-            job.current_step = f"{string} ({100 - remaining}% abgeschlossen)"
+            job.current_step = f"{string} ({100 - remaining}% complete)"
         else:
             elapsed_min = int((time.time() - started_at) / 60)
-            estimate = f"seit {elapsed_min} min"
+            estimate = f"{elapsed_min} min elapsed"
             if polling_minutes:
                 estimate = f"{elapsed_min}/{polling_minutes} min"
             job.current_step = f"{string} ({estimate})"
@@ -1227,7 +2102,7 @@ def run_smart_extended_test(device_path: str, job: TestJob) -> dict[str, Any]:
                 "type": "smart_extended",
                 "label": "SMART Extended Self-Test",
                 "credibility_level": "very_high",
-                "buyer_claim": "Der vom Laufwerk selbst ausgefuehrte SMART Extended Self-Test wurde abgeschlossen.",
+                "buyer_claim": "The SMART Extended self-test executed by the drive completed successfully.",
                 "duration_s": round(time.time() - started_at, 2),
                 "polling_minutes": polling_minutes,
                 "self_test_status": result,
@@ -1244,7 +2119,7 @@ def run_smart_selftest(device_path: str, job: TestJob, variant: str) -> dict[str
 
     rc, out, err = run_command(["smartctl", "-t", variant, device_path], timeout=30)
     if rc not in (0,):
-        raise RuntimeError(err.strip() or out.strip() or "SMART Self-Test konnte nicht gestartet werden")
+        raise RuntimeError(err.strip() or out.strip() or "Could not start SMART self-test.")
 
     started_at = time.time()
     poll_interval = 15 if variant == "short" else 60
@@ -1252,9 +2127,9 @@ def run_smart_selftest(device_path: str, job: TestJob, variant: str) -> dict[str
     label = "SMART Short Self-Test" if variant == "short" else "SMART Extended Self-Test"
     credibility = "high" if variant == "short" else "very_high"
     buyer_claim = (
-        "Der vom Laufwerk selbst ausgefuehrte SMART Short Self-Test wurde abgeschlossen."
+        "The SMART Short self-test executed by the drive completed successfully."
         if variant == "short"
-        else "Der vom Laufwerk selbst ausgefuehrte SMART Extended Self-Test wurde abgeschlossen."
+        else "The SMART Extended self-test executed by the drive completed successfully."
     )
 
     while True:
@@ -1262,17 +2137,17 @@ def run_smart_selftest(device_path: str, job: TestJob, variant: str) -> dict[str
         self_test = payload.get("ata_smart_data", {}).get("self_test", {})
         status = self_test.get("status", {})
         remaining = status.get("remaining_percent")
-        string = status.get("string") or f"{label} laeuft"
+        string = status.get("string") or f"{label} running"
         polling_minutes = self_test.get("polling_minutes", {}).get(polling_key)
         passed = payload.get("smart_status", {}).get("passed")
         log_entries = payload.get("ata_smart_self_test_log", {}).get("standard", {}).get("table", [])
 
         if isinstance(remaining, int):
             job.progress = max(0.01, min(0.99, (100 - remaining) / 100))
-            job.current_step = f"{string} ({100 - remaining}% abgeschlossen)"
+            job.current_step = f"{string} ({100 - remaining}% complete)"
         else:
             elapsed_min = int((time.time() - started_at) / 60)
-            estimate = f"seit {elapsed_min} min"
+            estimate = f"{elapsed_min} min elapsed"
             if polling_minutes:
                 estimate = f"{elapsed_min}/{polling_minutes} min"
             job.current_step = f"{string} ({estimate})"
@@ -1297,10 +2172,8 @@ def run_smart_selftest(device_path: str, job: TestJob, variant: str) -> dict[str
 
 
 def erase_allowed(disk: dict[str, Any], allow_internal: bool = False) -> None:
-    if not disk.get("rotational"):
-        raise RuntimeError("Loeschen ist hier nur fuer rotierende Festplatten vorgesehen.")
     if not allow_internal and not (disk.get("hotplug") or disk.get("transport") == "usb"):
-        raise RuntimeError("Destruktives Loeschen ist nur fuer extern angeschlossene Laufwerke freigeschaltet.")
+        raise RuntimeError("Destructive erase is only enabled for externally attached drives.")
 
 
 def run_zero_erase(disk: dict[str, Any], job: TestJob, allow_internal: bool = False) -> dict[str, Any]:
@@ -1319,6 +2192,7 @@ def run_zero_erase(disk: dict[str, Any], job: TestJob, allow_internal: bool = Fa
         "status=progress",
     ]
     started = time.time()
+    started_iso = utc_now_iso()
     proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
     bytes_written = 0
     progress_re = re.compile(r"(\d+)\s+bytes")
@@ -1328,36 +2202,61 @@ def run_zero_erase(disk: dict[str, Any], job: TestJob, allow_internal: bool = Fa
         if match:
             bytes_written = int(match.group(1))
             job.progress = min(0.99, bytes_written / total)
-            job.current_step = f"{format_bytes(bytes_written)} von {format_bytes(total)} ueberschrieben"
+            job.current_step = f"{format_bytes(bytes_written)} of {format_bytes(total)} overwritten"
             persist_job_state(job)
     rc = proc.wait()
     if rc != 0:
-        raise RuntimeError(f"Loeschen fehlgeschlagen (Exit {rc})")
+        raise RuntimeError(f"Erase failed (exit {rc})")
     duration = max(0.001, time.time() - started)
+    compliance = compliance_from_options(job.options)
     return {
         "type": "erase_zero",
-        "label": "1x Nullschreiben",
+        "label": "Single-pass zero erase",
         "credibility_level": "destructive",
-        "buyer_claim": "Die Platte wurde vor dem Verkauf einmal vollstaendig mit Nullen ueberschrieben.",
+        "buyer_claim": "The drive was fully overwritten with zeros once before resale.",
         "duration_s": round(duration, 2),
         "bytes_written": total,
         "average_throughput_mib_s": round(total / duration / (1024 * 1024), 2),
         "actions": actions,
+        "erasure": {
+            "method": "single_pass_zero_overwrite",
+            "tool": "dd",
+            "started_at": started_iso,
+            "completed_at": utc_now_iso(),
+            "device": disk["path"],
+            "serial": disk.get("serial"),
+            "bytes_targeted": total,
+            "bytes_confirmed_by_tool": total,
+            "compliance_profile": compliance,
+            "verification": "tool exit status and byte count; no post-erase sampling verification yet",
+        },
     }
 
 
-def run_secure_erase_ata(disk: dict[str, Any], job: TestJob, allow_internal: bool = False) -> dict[str, Any]:
+def run_secure_erase_ata(
+    disk: dict[str, Any],
+    job: TestJob,
+    allow_internal: bool = False,
+    enhanced: bool = False,
+) -> dict[str, Any]:
     caps = secure_erase_capabilities(disk)
     if not caps.get("supported"):
         raise RuntimeError(caps.get("reason") or "ATA Secure Erase nicht verfuegbar.")
+    method = "enhanced" if enhanced else "basic"
+    if method == "enhanced" and not caps.get("enhanced_supported"):
+        raise RuntimeError("ATA Enhanced Secure Erase is not reported as supported by this drive.")
+    if method == "basic" and not caps.get("basic_supported"):
+        raise RuntimeError("ATA Secure Erase is not reported as supported by this drive.")
 
     import subprocess
 
     erase_allowed(disk, allow_internal=allow_internal)
     actions = unmount_disk_children(disk["name"])
     password = f"wipe-{uuid.uuid4().hex[:8]}"
-    method_flag = "--security-erase-enhanced" if caps.get("method") == "enhanced" else "--security-erase"
+    method_flag = "--security-erase-enhanced" if method == "enhanced" else "--security-erase"
+    label = "ATA Enhanced Secure Erase" if method == "enhanced" else "ATA Secure Erase"
     started = time.time()
+    started_iso = utc_now_iso()
 
     set_pass = subprocess.run(
         ["hdparm", "--user-master", "u", f"--security-set-pass", password, disk["path"]],
@@ -1369,7 +2268,7 @@ def run_secure_erase_ata(disk: dict[str, Any], job: TestJob, allow_internal: boo
         raise RuntimeError(set_pass.stderr.strip() or set_pass.stdout.strip() or "Security-Passwort konnte nicht gesetzt werden.")
 
     job.progress = 0.02
-    job.current_step = "ATA Secure Erase gestartet"
+    job.current_step = f"{label} started"
     persist_job_state(job)
 
     proc = subprocess.Popen(
@@ -1381,23 +2280,34 @@ def run_secure_erase_ata(disk: dict[str, Any], job: TestJob, allow_internal: boo
 
     while proc.poll() is None:
         elapsed_min = int((time.time() - started) / 60)
-        job.current_step = f"ATA Secure Erase laeuft ({elapsed_min} min)"
+        job.current_step = f"{label} running ({elapsed_min} min)"
         persist_job_state(job)
         time.sleep(30)
 
     stdout, stderr = proc.communicate()
     if proc.returncode != 0:
-        raise RuntimeError(stderr.strip() or stdout.strip() or "ATA Secure Erase fehlgeschlagen.")
+        raise RuntimeError(stderr.strip() or stdout.strip() or "ATA Secure Erase failed.")
 
     duration = max(0.001, time.time() - started)
+    compliance = compliance_from_options(job.options)
     return {
         "type": "secure_erase_ata",
-        "label": "ATA Secure Erase",
+        "label": label,
         "credibility_level": "destructive",
-        "buyer_claim": "Die Platte wurde per ATA Secure Erase geloescht, sofern vom Laufwerk und Adapter unterstuetzt.",
+        "buyer_claim": f"The drive was erased using {label}, as reported supported by the drive and adapter.",
         "duration_s": round(duration, 2),
         "actions": actions,
-        "method": caps.get("method"),
+        "method": method,
+        "erasure": {
+            "method": "ata_secure_erase_enhanced" if enhanced else "ata_secure_erase",
+            "tool": "hdparm",
+            "started_at": started_iso,
+            "completed_at": utc_now_iso(),
+            "device": disk["path"],
+            "serial": disk.get("serial"),
+            "compliance_profile": compliance,
+            "verification": "hdparm exit status; firmware performs erase internally",
+        },
     }
 
 
@@ -1408,8 +2318,8 @@ def run_test_job(job_id: str) -> None:
             return
         jobs[job_id] = job
         job.status = "running"
-        job.current_step = "Lese Geraetedaten"
-        job.messages.append("Test gestartet")
+        job.current_step = "Reading drive data"
+        job.messages.append("Test started")
         save_job(job)
 
     try:
@@ -1430,32 +2340,56 @@ def run_test_job(job_id: str) -> None:
             test_result = run_smart_extended_test(disk["path"], job)
         elif job.mode == "erase_zero":
             test_result = run_zero_erase(disk, job, allow_internal=allow_internal_erase)
-        elif job.mode == "secure_erase_ata":
-            test_result = run_secure_erase_ata(disk, job, allow_internal=allow_internal_erase)
+        elif job.mode in {"secure_erase_ata", "secure_erase_ata_enhanced"}:
+            test_result = run_secure_erase_ata(
+                disk,
+                job,
+                allow_internal=allow_internal_erase,
+                enhanced=job.mode == "secure_erase_ata_enhanced",
+            )
         else:
             raise ValueError(f"Unsupported mode: {job.mode}")
-
-        report = build_report_payload(disk, smart, health, test_result, source_job=job)
-        report_id = save_report(report)
 
         with jobs_lock:
             job.progress = 1.0
             job.status = "done"
-            job.current_step = "Fertig"
-            job.messages.append("Test abgeschlossen")
-            job.result = {"report_id": report_id, "report": report}
+            job.current_step = "Done"
+            if "Test completed" not in job.messages:
+                job.messages.append("Test completed")
+            report = build_report_payload(disk, smart, health, test_result, source_job=job)
+            report_id = save_report(report)
+            job.current_step = "Saving report to export partition"
+            save_job(job)
+            export = auto_export_report_pdf(report_id)
+            job.current_step = "Done"
+            job.result = {"report_id": report_id, "report": report, "export": export}
             save_job(job)
     except Exception as exc:
         with jobs_lock:
             job.status = "error"
             job.error = str(exc)
-            job.messages.append(f"Fehler: {exc}")
+            job.messages.append(f"Error: {exc}")
             save_job(job)
 
 
 @app.route("/")
 def index() -> str:
-    return render_template("index.html")
+    return render_template("index.html", active_page="dashboard")
+
+
+@app.route("/test")
+def test_page() -> str:
+    return render_template("index.html", active_page="test")
+
+
+@app.route("/erase")
+def erase_page() -> str:
+    return render_template("index.html", active_page="erase")
+
+
+@app.route("/reports")
+def reports_page() -> str:
+    return render_template("index.html", active_page="reports")
 
 
 @app.route("/legal")
@@ -1476,7 +2410,7 @@ def legal_index() -> str:
 def legal_doc(slug: str) -> str:
     path = LEGAL_DOCS.get(slug)
     if not path:
-        return render_template("legal.html", docs=[], active_slug=slug, error="Dokument nicht gefunden."), 404
+        return render_template("legal.html", docs=[], active_slug=slug, error="Document not found."), 404
 
     docs = [{"slug": key, "title": value.stem.replace("_", " ").replace("-", " ").title()} for key, value in LEGAL_DOCS.items()]
     content = path.read_text(encoding="utf-8") if path.exists() else "Not found."
@@ -1485,8 +2419,76 @@ def legal_doc(slug: str) -> str:
 
 @app.route("/report/<report_id>")
 def report_view(report_id: str) -> str:
-    report = load_report(report_id)
-    return render_template("report.html", report=report)
+    try:
+        report = load_report(report_id)
+    except FileNotFoundError:
+        abort(404)
+    return render_template("report.html", report=report, github_qr_svg=github_qr_inline_svg())
+
+
+@app.route("/certificate/<report_id>")
+def certificate_view(report_id: str) -> str:
+    try:
+        report = load_report(report_id)
+    except FileNotFoundError:
+        abort(404)
+    return render_template("certificate.html", report=report, certificate=report.get("certificate", {}), github_qr_svg=github_qr_inline_svg())
+
+
+@app.get("/api/certificates/<report_id>/verify")
+def api_verify_certificate(report_id: str):
+    path = report_file_path(report_id)
+    if not path.exists():
+        return jsonify({"error": "Report not found"}), 404
+
+    raw = json.loads(path.read_text(encoding="utf-8"))
+    certificate = raw.get("certificate") or {}
+    expected_report = enrich_report(dict(raw))
+    expected = expected_report.get("certificate") or {}
+    persisted = bool(certificate)
+    if not certificate:
+        certificate = expected
+    checks = {
+        "report_sha256": certificate.get("report_sha256") == expected.get("report_sha256"),
+        "audit_chain_sha256": certificate.get("audit_chain_sha256") == expected.get("audit_chain_sha256"),
+        "signature": verify_signature(
+            certificate.get("public_key_pem") or "",
+            canonical_json_bytes(certificate.get("signed_payload") or {}),
+            certificate.get("signature") or "",
+        ),
+        "signing_key_fingerprint": certificate.get("signing_key_fingerprint") == public_key_fingerprint(certificate.get("public_key_pem") or ""),
+    }
+    return jsonify(
+        {
+            "report_id": report_id,
+            "valid": all(checks.values()),
+            "persisted": persisted,
+            "checks": checks,
+            "certificate": certificate,
+        }
+    )
+
+
+@app.get("/report/<report_id>/pdf")
+def report_pdf_download(report_id: str):
+    try:
+        report = load_report(report_id)
+    except FileNotFoundError:
+        abort(404)
+
+    base_name = report_filename(report).removesuffix(".json")
+    tmp = tempfile.NamedTemporaryFile(prefix=f"{base_name}_", suffix=".pdf", delete=False)
+    tmp_path = Path(tmp.name)
+    tmp.close()
+    try:
+        render_report_pdf_to_path(report_id, tmp_path)
+    except Exception as exc:
+        tmp_path.unlink(missing_ok=True)
+        return jsonify({"error": str(exc)}), 500
+
+    data = tmp_path.read_bytes()
+    tmp_path.unlink(missing_ok=True)
+    return send_file(BytesIO(data), as_attachment=True, download_name=f"{base_name}.pdf", mimetype="application/pdf")
 
 
 @app.get("/api/disks")
@@ -1513,6 +2515,7 @@ def api_disk_detail(device_name: str):
         smart = get_smart_data(disk["path"])
         health = compute_health(disk, smart)
         erase = secure_erase_capabilities(disk)
+        nvme_erase = nvme_erase_capabilities(disk)
         selftest = sync_external_selftest_for_disk(disk)
         return jsonify(
             {
@@ -1522,6 +2525,7 @@ def api_disk_detail(device_name: str):
                 "smart_rows": normalized_smart_rows((smart.get("payload") or {})),
                 "health": health,
                 "erase": erase,
+                "nvme_erase": nvme_erase,
                 "selftest": selftest,
                 "modes": disk["modes"],
             }
@@ -1541,26 +2545,20 @@ def api_tests():
     payload = request.get_json(silent=True) or {}
     device = payload.get("device")
     mode = payload.get("mode", "quick")
+    compliance_profile = payload.get("compliance_profile") or "resale_basic"
     allowed_modes = {"quick", "deep_sample", "smart_short", "smart_extended", "full"}
     if not device:
-        return jsonify({"error": "device fehlt"}), 400
+        return jsonify({"error": "device is required"}), 400
     if mode not in allowed_modes:
-        return jsonify({"error": f"Unbekannter Testmodus: {mode}"}), 400
+        return jsonify({"error": f"Unknown test mode: {mode}"}), 400
     if has_active_job_for_device(device):
-        return jsonify({"error": "Fuer dieses Laufwerk laeuft bereits ein App-Job."}), 409
+        return jsonify({"error": "An app job is already running for this drive."}), 409
     disk = get_disk(device)
     selftest = sync_external_selftest_for_disk(disk)
     if selftest.get("running") and mode in {"smart_short", "smart_extended"}:
-        return jsonify({"error": "Auf diesem Laufwerk laeuft bereits ein SMART Self-Test."}), 409
+        return jsonify({"error": "A SMART self-test is already running on this drive."}), 409
 
-    job_id = uuid.uuid4().hex[:12]
-    job = TestJob(id=job_id, device=device, mode=mode, created_at=utc_now_iso())
-    with jobs_lock:
-        jobs[job_id] = job
-    save_job(job)
-
-    thread = threading.Thread(target=run_test_job, args=(job_id,), daemon=True)
-    thread.start()
+    job_id = start_test_job(device, mode, {"compliance_profile": compliance_profile})
     return jsonify({"job_id": job_id})
 
 
@@ -1578,20 +2576,21 @@ def api_erase_disk(device_name: str):
     payload = request.get_json(silent=True) or {}
     confirmation = (payload.get("confirmation") or "").strip()
     allow_internal = bool(payload.get("allow_internal"))
+    compliance_profile = payload.get("compliance_profile") or "nist_clear"
     try:
         disk = get_disk(device_name)
         if has_active_job_for_device(device_name):
-            return jsonify({"error": "Fuer dieses Laufwerk laeuft bereits ein App-Job."}), 409
+            return jsonify({"error": "An app job is already running for this drive."}), 409
         expected = {disk["path"], disk["serial"]}
         if confirmation not in expected:
-            return jsonify({"error": "Bestaetigung muss exakt Device-Pfad oder Seriennummer sein."}), 400
+            return jsonify({"error": "Confirmation must exactly match the device path or serial number."}), 400
         job_id = uuid.uuid4().hex[:12]
         job = TestJob(
             id=job_id,
             device=device_name,
             mode="erase_zero",
             created_at=utc_now_iso(),
-            options={"allow_internal_erase": allow_internal},
+            options={"allow_internal_erase": allow_internal, "compliance_profile": compliance_profile},
         )
         with jobs_lock:
             jobs[job_id] = job
@@ -1608,23 +2607,31 @@ def api_secure_erase_disk(device_name: str):
     payload = request.get_json(silent=True) or {}
     confirmation = (payload.get("confirmation") or "").strip()
     allow_internal = bool(payload.get("allow_internal"))
+    method = (payload.get("method") or "basic").strip().lower()
+    compliance_profile = payload.get("compliance_profile") or ("nist_purge" if method == "enhanced" else "nist_clear")
+    if method not in {"basic", "enhanced"}:
+        return jsonify({"error": "method must be basic or enhanced"}), 400
     try:
         disk = get_disk(device_name)
         caps = secure_erase_capabilities(disk)
         if not caps.get("supported"):
-            return jsonify({"error": caps.get("reason") or "ATA Secure Erase nicht verfuegbar."}), 400
+            return jsonify({"error": caps.get("reason") or "ATA Secure Erase is not available."}), 400
+        if method == "enhanced" and not caps.get("enhanced_supported"):
+            return jsonify({"error": "ATA Enhanced Secure Erase is not supported by this drive."}), 400
+        if method == "basic" and not caps.get("basic_supported"):
+            return jsonify({"error": "ATA Secure Erase is not supported by this drive."}), 400
         if has_active_job_for_device(device_name):
-            return jsonify({"error": "Fuer dieses Laufwerk laeuft bereits ein App-Job."}), 409
+            return jsonify({"error": "An app job is already running for this drive."}), 409
         expected = {disk["path"], disk["serial"]}
         if confirmation not in expected:
-            return jsonify({"error": "Bestaetigung muss exakt Device-Pfad oder Seriennummer sein."}), 400
+            return jsonify({"error": "Confirmation must exactly match the device path or serial number."}), 400
         job_id = uuid.uuid4().hex[:12]
         job = TestJob(
             id=job_id,
             device=device_name,
-            mode="secure_erase_ata",
+            mode="secure_erase_ata_enhanced" if method == "enhanced" else "secure_erase_ata",
             created_at=utc_now_iso(),
-            options={"allow_internal_erase": allow_internal},
+            options={"allow_internal_erase": allow_internal, "secure_erase_method": method, "compliance_profile": compliance_profile},
         )
         with jobs_lock:
             jobs[job_id] = job
@@ -1654,7 +2661,7 @@ def api_job_status(job_id: str):
         return jsonify(external)
     job = get_job(job_id)
     if not job:
-        return jsonify({"error": "Job nicht gefunden"}), 404
+        return jsonify({"error": "Job not found"}), 404
     if job.mode in {"smart_short", "smart_extended"} and job.status in {"queued", "running", "interrupted"}:
         sync_external_selftests(device=job.device)
         job = get_job(job_id) or job
@@ -1663,6 +2670,7 @@ def api_job_status(job_id: str):
 
 @app.get("/api/reports")
 def api_reports():
+    import_exported_reports()
     reports = []
     for path in sorted(REPORT_DIR.glob("*.json"), reverse=True):
         try:
@@ -1673,11 +2681,62 @@ def api_reports():
                     "generated_at": payload["generated_at"],
                     "device": payload["device"],
                     "health": payload["health"],
+                    "export": payload.get("export"),
                 }
             )
         except Exception:
             continue
     return jsonify({"reports": reports})
+
+
+@app.get("/api/export-targets")
+def api_export_targets():
+    try:
+        return jsonify({"targets": list_export_targets(), "pdf_engine": chrome_binary()})
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 500
+
+
+@app.get("/api/compliance-profiles")
+def api_compliance_profiles():
+    return jsonify({"profiles": COMPLIANCE_PROFILES})
+
+
+@app.get("/api/enterprise/status")
+def api_enterprise_status():
+    return jsonify(enterprise_status(force=request.args.get("refresh") == "1"))
+
+
+@app.post("/api/reports/<report_id>/export-pdf")
+def api_export_report_pdf(report_id: str):
+    payload = request.get_json(silent=True) or {}
+    mountpoint = (payload.get("mountpoint") or "").strip()
+    try:
+        result = export_report_pdf(report_id, mountpoint or None)
+        update_report_export_status(report_id, result)
+        return jsonify(result)
+    except FileNotFoundError as exc:
+        return jsonify({"error": str(exc)}), 404
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 500
+
+
+@app.get("/api/reports/<report_id>/verify-export")
+def api_verify_export_bundle(report_id: str):
+    try:
+        report = load_report(report_id)
+    except FileNotFoundError:
+        return jsonify({"error": "Report not found"}), 404
+    export = report.get("export") or {}
+    bundle_path = export.get("bundle_path")
+    if not bundle_path:
+        return jsonify({"error": "Report has no exported bundle path."}), 404
+    try:
+        return jsonify(verify_export_bundle(bundle_path))
+    except FileNotFoundError as exc:
+        return jsonify({"error": str(exc)}), 404
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 500
 
 
 @app.delete("/api/reports/<report_id>")
@@ -1686,10 +2745,11 @@ def api_delete_report(report_id: str):
         delete_report(report_id)
         return jsonify({"deleted": True, "report_id": report_id})
     except FileNotFoundError:
-        return jsonify({"error": "Bericht nicht gefunden"}), 404
+        return jsonify({"error": "Report not found"}), 404
     except Exception as exc:
         return jsonify({"error": str(exc)}), 500
 
 
 if __name__ == "__main__":
-    app.run(debug=False, host="127.0.0.1", port=5055)
+    start_portal_agent()
+    app.run(debug=False, host="127.0.0.1", port=5055, threaded=True)

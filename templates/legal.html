@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>{{ title or "DriveProof Legal" }}</title>
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=20260704-ui7">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=20260705-export1">
   </head>
   <body>
     <div class="app-shell legal-shell">
@@ -15,7 +15,7 @@
           <p class="topbar-copy">Bundled project license, third-party license overview, and commercial services notes.</p>
         </div>
         <div class="topbar-actions">
-          <a href="/" class="icon-button legal-back-link">Zur App</a>
+          <a href="/" class="icon-button legal-back-link">Back to app</a>
         </div>
       </header>
 
@@ -27,7 +27,7 @@
       <main class="legal-layout">
         <aside class="panel panel-list legal-nav">
           <div class="section-head">
-            <h2>Dokumente</h2>
+            <h2>Documents</h2>
           </div>
           <div class="disk-list">
             {% for doc in docs %}

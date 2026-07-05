@@ -4,3 +4,7 @@ result
 *.pyc
 state.db
 reports/
+driveproof-signing.key
+driveproof-signing.legacy
+driveproof-web.log
+release/
