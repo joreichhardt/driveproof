@@ -64,7 +64,8 @@ up a full desktop environment.
 - SMART evaluation via `smartctl`
 - human-readable SMART attribute table
 - health score with resale-oriented summary
-- automatic detection of `HDD`, `SSD`, and `NVMe`
+- automatic detection of drive type: `HDD`, `SSD`, and `NVMe`
+- automatic capability checks for SMART tests and erase options
 - drive-type-specific test UI:
   - HDD: `Quick`, `Deep Sample`, `SMART Extended`, `Full Read`
   - SSD/NVMe: `Quick`, `SMART Short`, `SMART Extended`, `Full Read`
@@ -73,6 +74,8 @@ up a full desktop environment.
 - detection of externally started SMART self-tests
 - safe removal
 - optional destructive erase functions with explicit safety unlocks
+- firmware-based ATA Secure Erase and ATA Enhanced Secure Erase when supported
+  by the drive and controller
 - printable browser reports with DriveProof logo and GitHub QR code
 - direct PDF download from each report
 - automatic PDF and JSON report export to the live USB FAT32 partition
@@ -132,6 +135,24 @@ sudo make app
 7. When a test finishes, DriveProof creates a report.
 8. On the live USB image, the app automatically saves PDF and JSON copies to the `DRVPROOF` FAT32 export partition.
 9. Open the report, download the PDF, print it, or copy it from the USB stick for resale documentation.
+
+## Drive Type and Capability Detection
+
+DriveProof automatically identifies whether a detected drive is an `HDD`, `SSD`,
+or `NVMe` device. The UI then adapts the available diagnostics and safety
+options to the detected device type and exposed controller capabilities.
+
+Detection is used for:
+- choosing sensible default test options for HDDs, SSDs, and NVMe drives
+- showing SMART self-test options only when they are usable
+- detecting externally running SMART self-tests
+- checking whether ATA Secure Erase is exposed by the drive
+- checking whether ATA Enhanced Secure Erase is explicitly supported
+- separating internal drives from removable/USB-attached drives for safety
+
+Firmware-based erase support depends on the drive firmware and the controller
+path. Direct SATA connections usually expose more features than many USB docks.
+DriveProof shows firmware erase options only after capability checks pass.
 
 ## Nix Build
 
@@ -298,10 +319,27 @@ DriveProof separates destructive actions from diagnostics. Erase functions are
 hidden behind explicit checkboxes and require typing the exact device path or
 serial number before a job starts.
 
+DriveProof distinguishes software overwrite from firmware erase:
+- software overwrite writes to the block device from the live system
+- firmware erase asks the drive firmware to erase itself through ATA security
+  commands when the command path is available
+
 Available erase modes:
 - `Single-pass zero erase`: writes zeros over the whole block device with `dd`
-- `ATA Secure Erase`: uses `hdparm --security-erase` when the drive exposes ATA security support
-- `ATA Enhanced Secure Erase`: uses `hdparm --security-erase-enhanced` only when the drive explicitly reports enhanced erase support
+- `ATA Secure Erase`: firmware-based erase using `hdparm --security-erase`
+  when the drive exposes ATA security support
+- `ATA Enhanced Secure Erase`: firmware-based enhanced erase using
+  `hdparm --security-erase-enhanced` only when the drive explicitly reports
+  enhanced erase support
+
+Drive type handling:
+- HDDs are detected and offered HDD-oriented read tests plus ATA firmware erase
+  checks where applicable.
+- SATA SSDs are detected and can use ATA Secure Erase when the firmware and
+  controller expose the required ATA security commands.
+- NVMe drives are detected and tested with NVMe-aware health/SMART data.
+  `nvme-cli` is included in the live image; destructive NVMe Sanitize/Format is
+  intentionally not enabled yet in the public live client.
 
 Compliance/report profiles:
 - `Resale Basic`: SMART and read-test evidence for selling used drives
