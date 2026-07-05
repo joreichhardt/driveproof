@@ -122,6 +122,7 @@ in {
     hdparm
     nvme-cli
     openbox
+    parted
     smartmontools
     udisks
     util-linux
@@ -144,6 +145,7 @@ in {
       exfatprogs
       hdparm
       nvme-cli
+      parted
       smartmontools
       udisks
       util-linux

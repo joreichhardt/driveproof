@@ -88,12 +88,19 @@ up a full desktop environment.
 
 ## Local Run on Ubuntu/Debian
 
+Full local execution is Linux-only at the moment. The app talks to Linux block
+devices and uses Linux tooling such as `lsblk`, `udisksctl`, `smartctl`,
+`hdparm`, and `nvme`.
+
 Requirements:
 - Python 3.11+
-- `smartmontools`
-- `util-linux`
-- `udisks2`
-- `hdparm` for ATA Secure Erase
+- `smartmontools` for SMART data and SMART self-tests
+- `util-linux` for block-device helpers such as `lsblk`
+- `udisks2` for safe removal and removable media handling
+- `hdparm` for ATA Secure Erase and ATA Enhanced Secure Erase
+- `nvme-cli` for NVMe device information and future NVMe sanitize support
+- `parted` and `dosfstools` for USB/export-partition workflows
+- `eject` for safe media handling
 - Chromium or Chrome for PDF export
 
 Installation:
@@ -103,8 +110,11 @@ python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 sudo apt update
-sudo apt install -y smartmontools udisks2 util-linux hdparm chromium-browser
+sudo apt install -y smartmontools udisks2 util-linux hdparm nvme-cli parted dosfstools eject chromium-browser
 ```
+
+On Debian or Ubuntu variants where `chromium-browser` is not available, install
+`chromium` instead.
 
 Start:
 
@@ -123,6 +133,23 @@ You can also use the Makefile shortcut:
 ```bash
 sudo make app
 ```
+
+### Windows and macOS Local Run
+
+Native local execution on Windows or macOS is not supported yet. DriveProof is
+currently designed around Linux block-device APIs and Linux command-line tools.
+
+Recommended options on Windows and macOS:
+- boot the target machine with the DriveProof NixOS Live USB image
+- use the bootable `driveproof-live-usb.img` when you want the built-in FAT32
+  report export partition
+- use a VM only for UI testing; direct SMART, ATA Secure Erase, NVMe, and USB
+  passthrough behavior depends heavily on the hypervisor and is not a reliable
+  resale-test workflow
+
+WSL is not recommended for real drive testing because raw disk access, SMART
+passthrough, USB docks, ATA security commands, and NVMe control commands are
+not consistently available there.
 
 ## Typical Workflow
 
