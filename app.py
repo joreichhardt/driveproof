@@ -1409,7 +1409,7 @@ def get_external_selftest_status(device_path: str) -> dict[str, Any]:
 def sync_external_selftest_for_disk(disk: dict[str, Any]) -> dict[str, Any]:
     selftest = get_external_selftest_status(disk["path"])
     recovered_job = recover_internal_smart_job(disk["name"], selftest)
-    selftest["source"] = "app" if recovered_job or has_active_internal_smart_job(disk["name"]) else "external"
+    selftest["source"] = "app" if recovered_job or has_active_app_smart_selftest(disk["name"]) else "external"
     store_device_status(disk, selftest)
     return selftest
 
@@ -2041,6 +2041,7 @@ class TestJob:
 
 jobs: dict[str, TestJob] = {}
 jobs_lock = threading.Lock()
+SMART_SELFTEST_MODES = {"smart_short", "smart_extended"}
 
 
 def row_to_job(row: sqlite3.Row) -> TestJob:
@@ -2118,6 +2119,26 @@ def latest_internal_smart_job(device: str) -> TestJob | None:
 def has_active_internal_smart_job(device: str) -> bool:
     job = latest_internal_smart_job(device)
     return bool(job and job.status in {"queued", "running"})
+
+
+def has_active_app_smart_selftest(device: str) -> bool:
+    with db_connect() as conn:
+        rows = conn.execute(
+            """
+            SELECT *
+            FROM jobs
+            WHERE device = ?
+              AND status IN ('queued', 'running')
+            """,
+            (device,),
+        ).fetchall()
+    for row in rows:
+        job = row_to_job(row)
+        if job.mode in SMART_SELFTEST_MODES:
+            return True
+        if job.options.get("active_post_test_mode") in SMART_SELFTEST_MODES:
+            return True
+    return False
 
 
 def recover_internal_smart_job(device: str, selftest: dict[str, Any]) -> TestJob | None:
@@ -2979,6 +3000,7 @@ def run_test_job(job_id: str) -> None:
                 job.current_step = f"Running post-erase test: {post_test_mode}"
                 job.messages.append(f"Post-erase test started: {post_test_mode}")
                 job.options["post_erase_parent_report_id"] = result["report_id"]
+                job.options["active_post_test_mode"] = post_test_mode
                 save_job(job)
 
             disk = get_disk(job.device)
