@@ -3041,6 +3041,11 @@ def erase_page() -> str:
     return render_template("index.html", active_page="erase")
 
 
+@app.route("/jobs")
+def jobs_page() -> str:
+    return render_template("index.html", active_page="jobs")
+
+
 @app.route("/reports")
 def reports_page() -> str:
     return render_template("index.html", active_page="reports")

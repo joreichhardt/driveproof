@@ -1038,14 +1038,16 @@ function renderSelectedJobStatus(job) {
 
 function renderActiveJobs() {
   const container = byId("activeJobsList");
+  if (!container) return;
   container.innerHTML = "";
+  const jobsPage = document.body.dataset.page === "jobs";
   if (!state.activeJobs.length) {
-    container.innerHTML = `<div class="job-box muted">No other running jobs.</div>`;
+    container.innerHTML = `<div class="job-box muted">No running jobs.</div>`;
     return;
   }
 
   state.activeJobs
-    .filter((job) => !state.selectedDisk || job.device !== state.selectedDisk.name || String(job.id).startsWith("external-"))
+    .filter((job) => jobsPage || !state.selectedDisk || job.device !== state.selectedDisk.name || String(job.id).startsWith("external-"))
     .forEach((job) => {
     const percent = Math.round((job.progress || 0) * 100);
     const element = document.createElement("div");
@@ -1067,7 +1069,7 @@ function renderActiveJobs() {
   });
 
   if (!container.children.length) {
-    container.innerHTML = `<div class="job-box muted">No other running jobs.</div>`;
+    container.innerHTML = `<div class="job-box muted">No running jobs.</div>`;
   }
 }
 

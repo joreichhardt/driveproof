@@ -1070,13 +1070,17 @@ body[data-theme="light"] .mini-action {
   background: color-mix(in srgb, var(--accent-soft) 55%, var(--panel));
 }
 
-body[data-page="reports"] .layout {
+body[data-page="reports"] .layout,
+body[data-page="jobs"] .layout {
   grid-template-columns: 1fr;
 }
 
 body[data-page="reports"] .panel-list,
 body[data-page="reports"] #emptyState,
-body[data-page="reports"] #detailView {
+body[data-page="reports"] #detailView,
+body[data-page="jobs"] .panel-list,
+body[data-page="jobs"] #emptyState,
+body[data-page="jobs"] #detailView {
   display: none !important;
 }
 
@@ -1092,6 +1096,7 @@ body[data-page="dashboard"] .panel-list,
 body[data-page="dashboard"] #emptyState,
 body[data-page="dashboard"] #detailView,
 body[data-page="dashboard"] .reports-section,
+body[data-page="dashboard"] .jobs-section,
 body[data-page="dashboard"] .settings-section {
   display: none !important;
 }
@@ -1195,6 +1200,14 @@ body[data-page="settings"] .settings-section {
   display: grid;
 }
 
+.jobs-section {
+  display: none;
+}
+
+body[data-page="jobs"] .jobs-section {
+  display: grid;
+}
+
 body[data-page="test"] .erase-menu,
 body[data-page="erase"] .diagnostics-menu {
   display: none;
@@ -1206,10 +1219,16 @@ body[data-page="erase"] .erase-menu {
 
 body[data-page="test"] .reports-section,
 body[data-page="erase"] .reports-section,
+body[data-page="test"] .jobs-section,
+body[data-page="erase"] .jobs-section,
+body[data-page="reports"] .jobs-section,
+body[data-page="settings"] .jobs-section,
 body[data-page="dashboard"] .settings-section,
 body[data-page="test"] .settings-section,
 body[data-page="erase"] .settings-section,
-body[data-page="reports"] .settings-section {
+body[data-page="reports"] .settings-section,
+body[data-page="jobs"] .settings-section,
+body[data-page="jobs"] .reports-section {
   display: none;
 }
 

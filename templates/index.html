@@ -24,6 +24,7 @@
             <a class="nav-link {{ 'active' if active_page == 'dashboard' else '' }}" href="/">Dashboard</a>
             <a class="nav-link {{ 'active' if active_page == 'test' else '' }}" href="/test">Test</a>
             <a class="nav-link {{ 'active' if active_page == 'erase' else '' }}" href="/erase">Erase</a>
+            <a class="nav-link {{ 'active' if active_page == 'jobs' else '' }}" href="/jobs">Jobs</a>
             <a class="nav-link {{ 'active' if active_page == 'reports' else '' }}" href="/reports">Reports</a>
             <a class="nav-link {{ 'active' if active_page == 'settings' else '' }}" href="/settings">Settings</a>
           </nav>
@@ -205,13 +206,6 @@
                     <button id="nvmeSanitizeBlockButton" class="erase-button secondary" disabled>NVMe Sanitize Block</button>
                   </div>
                 </details>
-                <details class="tool-menu jobs-menu" open>
-                  <summary>Running jobs</summary>
-                  <div class="section-head">
-                    <h2>Other running jobs</h2>
-                  </div>
-                  <div id="activeJobsList" class="active-jobs-list"></div>
-                </details>
               </div>
             </div>
 
@@ -232,6 +226,16 @@
                 <h2>Reports</h2>
               </div>
               <div id="reportsList" class="reports-list"></div>
+            </div>
+          </div>
+
+          <div class="content-grid lower-grid jobs-section">
+            <div class="panel inset">
+              <div class="section-head">
+                <h2>Running jobs</h2>
+                <p class="muted">All currently active DriveProof and detected SMART self-test jobs.</p>
+              </div>
+              <div id="activeJobsList" class="active-jobs-list"></div>
             </div>
           </div>
 
