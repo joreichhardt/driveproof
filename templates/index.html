@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>DriveProof</title>
     <link rel="icon" type="image/png" href="{{ url_for('static', filename='assets/driveproof-logo.png') }}">
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=20260705-dashboard-overview1">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=20260705-dashboard-layout1">
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   </head>
   <body data-page="{{ active_page or 'dashboard' }}">
@@ -87,6 +87,8 @@
                 </div>
                 <div id="dashboardDiskGroups" class="dashboard-grid"></div>
               </div>
+            </div>
+            <div class="content-grid lower-grid">
               <div class="panel inset">
                 <div class="section-head">
                   <h2>Controllers</h2>
@@ -260,6 +262,6 @@
       </footer>
     </div>
 
-    <script src="{{ url_for('static', filename='app.js') }}?v=20260705-dashboard-overview1"></script>
+    <script src="{{ url_for('static', filename='app.js') }}?v=20260705-dashboard-layout1"></script>
   </body>
   </html>

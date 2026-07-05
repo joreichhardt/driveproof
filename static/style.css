@@ -1035,8 +1035,12 @@ body:not([data-page="dashboard"]) .dashboard-section {
   gap: 12px;
 }
 
+#dashboardDiskGroups.dashboard-grid {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
 #dashboardControllers.dashboard-grid {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
 }
 
 .dashboard-card {
