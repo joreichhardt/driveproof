@@ -116,6 +116,7 @@ in {
     bashInteractive
     chromium
     curl
+    dpkg
     dosfstools
     eject
     exfatprogs
@@ -124,8 +125,10 @@ in {
     nvme-cli
     openbox
     parted
+    rpmextract
     sg3_utils
     smartmontools
+    unzip
     udisks
     util-linux
     xorg.xauth
@@ -142,6 +145,7 @@ in {
     after = [ "network.target" ];
     path = with pkgs; [
       coreutils
+      dpkg
       dosfstools
       eject
       exfatprogs
@@ -149,8 +153,10 @@ in {
       lsscsi
       nvme-cli
       parted
+      rpmextract
       sg3_utils
       smartmontools
+      unzip
       udisks
       util-linux
     ];

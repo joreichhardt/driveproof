@@ -8,12 +8,14 @@
       system = "x86_64-linux";
       pkgs = import nixpkgs { inherit system; };
       exportPartitionSizeMiB = 512;
+      toolsPartitionSizeMiB = 512;
       mkUsbImage = iso:
         pkgs.runCommand "driveproof-live-usb-image"
           {
             nativeBuildInputs = [
               pkgs.coreutils
               pkgs.dosfstools
+              pkgs.e2fsprogs
               pkgs.xorriso
             ];
           }
@@ -26,12 +28,16 @@
             fat_path="$TMPDIR/driveproof-export.fat"
             truncate -s ${toString exportPartitionSizeMiB}M "$fat_path"
             mkfs.vfat -F 32 -n DRVPROOF "$fat_path"
+            tools_path="$TMPDIR/driveproof-tools.ext4"
+            truncate -s ${toString toolsPartitionSizeMiB}M "$tools_path"
+            mkfs.ext4 -F -L DRVTOOLS "$tools_path"
 
             xorriso \
               -indev "$iso_path" \
               -outdev "$img_path" \
               -boot_image any replay \
               -append_partition 3 0x0c "$fat_path" \
+              -append_partition 4 0x83 "$tools_path" \
               -commit
           '';
     in {

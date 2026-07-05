@@ -53,6 +53,45 @@ LEGAL_DOCS = {
 }
 REPORT_DIR.mkdir(parents=True, exist_ok=True)
 EXPORT_MOUNT_ROOT = Path("/run/media/driveproof")
+VENDOR_TOOL_DIR_NAME = "DriveProof-Vendor-Tools"
+VENDOR_TOOL_NAMES = ("storcli", "storcli64", "perccli", "perccli64", "arcconf", "ssacli", "hpssacli", "areca-cli", "cli64")
+VENDOR_TOOL_CATALOG = {
+    "storcli": {
+        "label": "Broadcom/LSI StorCLI",
+        "tool_names": ["storcli", "storcli64"],
+        "vendor": "Broadcom",
+        "download_url": "https://www.broadcom.com/support/download-search?pg=Storage+Adapters,+Controllers,+and+ICs&pf=RAID+Controller+Cards&pn=MegaRAID+SAS+Software+User+Guide&pa=Management+Software+and+Tools",
+        "license_note": "Download and use are subject to Broadcom license terms.",
+    },
+    "perccli": {
+        "label": "Dell PERCCLI",
+        "tool_names": ["perccli", "perccli64"],
+        "vendor": "Dell",
+        "download_url": "https://www.dell.com/support/home/drivers/driversdetails?driverid=f48c2",
+        "license_note": "Download and use are subject to the Dell Software License Agreement.",
+    },
+    "arcconf": {
+        "label": "Microchip/Adaptec ARCCONF",
+        "tool_names": ["arcconf"],
+        "vendor": "Microchip",
+        "download_url": "https://www.microchip.com/en-us/adaptec",
+        "license_note": "Download and use are subject to Microchip software license terms.",
+    },
+    "ssacli": {
+        "label": "HPE SSACLI",
+        "tool_names": ["ssacli", "hpssacli"],
+        "vendor": "HPE",
+        "download_url": "https://support.hpe.com/",
+        "license_note": "Download and use are subject to HPE software license terms.",
+    },
+    "areca": {
+        "label": "Areca CLI",
+        "tool_names": ["areca-cli", "cli64"],
+        "vendor": "Areca",
+        "download_url": "https://www.areca.com.tw/support/downloads.html",
+        "license_note": "Download and use are subject to Areca license terms.",
+    },
+}
 GITHUB_QR_PATH = BASE_DIR / "static" / "assets" / "github-qr.svg"
 PORTAL_URL = os.environ.get("DRIVEPROOF_PORTAL_URL", "").rstrip("/")
 PORTAL_TOKEN = os.environ.get("DRIVEPROOF_PORTAL_TOKEN", "")
@@ -136,6 +175,10 @@ app = Flask(__name__, template_folder=str(BASE_DIR / "templates"), static_folder
 def tool_path(name: str) -> str | None:
     if os.path.sep in name:
         return name if os.access(name, os.X_OK) else None
+    if name in VENDOR_TOOL_NAMES:
+        vendor_path = vendor_tool_path(name)
+        if vendor_path:
+            return vendor_path
     return shutil.which(name)
 
 
@@ -539,7 +582,7 @@ def list_export_targets() -> list[dict[str, Any]]:
     if rc != 0:
         raise RuntimeError(err.strip() or "lsblk failed")
 
-    allowed_fs = {"vfat", "exfat", "msdos"}
+    allowed_fs = {"vfat", "exfat", "msdos", "ext2", "ext3", "ext4", "xfs", "btrfs"}
     payload = json.loads(out)
     targets: list[dict[str, Any]] = []
     for item in payload.get("blockdevices", []):
@@ -555,6 +598,7 @@ def list_export_targets() -> list[dict[str, Any]]:
             if not mount.exists() or not os.access(mount, os.W_OK):
                 continue
             label = (current.get("label") or current.get("name") or mount.name or "EXPORT").strip()
+            report_compatible = fstype in {"vfat", "exfat", "msdos"}
             targets.append(
                 {
                     "id": mountpoint,
@@ -564,6 +608,8 @@ def list_export_targets() -> list[dict[str, Any]]:
                     "size_bytes": int(current.get("size") or 0),
                     "path": current.get("path"),
                     "removable": bool(current.get("rm")) or bool(current.get("hotplug")),
+                    "linux_permissions": fstype in {"ext2", "ext3", "ext4", "xfs", "btrfs"},
+                    "report_compatible": report_compatible,
                 }
             )
     targets.sort(key=lambda item: (not item["removable"], item["label"].lower(), item["mountpoint"]))
@@ -589,7 +635,7 @@ def ensure_export_partition_mounted() -> None:
     def walk(node: dict[str, Any]) -> None:
         fstype = (node.get("fstype") or "").lower()
         label = (node.get("label") or "").strip()
-        if node.get("type") == "part" and fstype in {"vfat", "exfat", "msdos"}:
+        if node.get("type") == "part" and fstype in {"vfat", "exfat", "msdos", "ext2", "ext3", "ext4", "xfs", "btrfs"}:
             candidates.append(node)
         for child in node.get("children") or []:
             walk(child)
@@ -599,7 +645,7 @@ def ensure_export_partition_mounted() -> None:
 
     candidates.sort(
         key=lambda item: (
-            (item.get("label") or "").strip() != "DRVPROOF",
+            {"DRVPROOF": 0, "DRVTOOLS": 1}.get((item.get("label") or "").strip(), 2),
             not (bool(item.get("rm")) or bool(item.get("hotplug"))),
             item.get("path") or "",
         )
@@ -612,12 +658,11 @@ def ensure_export_partition_mounted() -> None:
         mountpoint = EXPORT_MOUNT_ROOT / label
         try:
             mountpoint.mkdir(parents=True, exist_ok=True)
+            mount_options = "rw,umask=000" if (item.get("fstype") or "").lower() in {"vfat", "exfat", "msdos"} else "rw"
             rc, _out, _err = run_command(
-                ["mount", "-o", "rw,umask=000", item["path"], str(mountpoint)],
+                ["mount", "-o", mount_options, item["path"], str(mountpoint)],
                 timeout=20,
             )
-            if rc == 0:
-                return
         except Exception:
             continue
 
@@ -625,12 +670,14 @@ def ensure_export_partition_mounted() -> None:
 def find_export_target(mountpoint: str) -> dict[str, Any]:
     for target in list_export_targets():
         if target["mountpoint"] == mountpoint:
+            if not target.get("report_compatible"):
+                raise FileNotFoundError(f"Report target is not FAT/exFAT-compatible: {mountpoint}")
             return target
     raise FileNotFoundError(f"Export target not found or not writable: {mountpoint}")
 
 
 def default_export_target() -> dict[str, Any]:
-    targets = list_export_targets()
+    targets = [target for target in list_export_targets() if target.get("report_compatible")]
     if not targets:
         raise FileNotFoundError("No writable FAT/exFAT export partition found.")
     for target in targets:
@@ -640,6 +687,76 @@ def default_export_target() -> dict[str, Any]:
         if target["removable"]:
             return target
     return targets[0]
+
+
+def vendor_tool_roots() -> list[Path]:
+    roots = []
+    for target in list_export_targets():
+        if target.get("linux_permissions"):
+            roots.append(Path(target["mountpoint"]) / VENDOR_TOOL_DIR_NAME)
+    return roots
+
+
+def default_vendor_tool_root() -> Path:
+    targets = list_export_targets()
+    if not targets:
+        raise FileNotFoundError("No writable export partition found for vendor tools.")
+    for target in targets:
+        if target.get("linux_permissions"):
+            return Path(target["mountpoint"]) / VENDOR_TOOL_DIR_NAME
+    raise FileNotFoundError("No writable Linux filesystem found for vendor tools. Add or mount an ext4, XFS, or btrfs partition.")
+
+
+def vendor_tool_path(name: str) -> str | None:
+    for root in vendor_tool_roots():
+        candidate = root / name
+        if candidate.exists() and os.access(candidate, os.X_OK):
+            return str(candidate)
+    return None
+
+
+def list_vendor_tools() -> dict[str, Any]:
+    tools = []
+    for root in vendor_tool_roots():
+        if not root.exists():
+            continue
+        for path in sorted(root.iterdir()):
+            if not path.is_file():
+                continue
+            executable = os.access(path, os.X_OK)
+            known = path.name in VENDOR_TOOL_NAMES
+            version = "unknown"
+            if executable:
+                rc, out, err = run_command([str(path), "--version"], timeout=10)
+                version = (out.strip() or err.strip()).splitlines()[0] if (out.strip() or err.strip()) else f"probe exit {rc}"
+            tools.append(
+                {
+                    "name": path.name,
+                    "path": str(path),
+                    "root": str(root),
+                    "size_bytes": path.stat().st_size,
+                    "executable": executable,
+                    "known": known,
+                    "version": version,
+                }
+            )
+    installed_names = {tool["name"] for tool in tools}
+    catalog = []
+    for key, item in VENDOR_TOOL_CATALOG.items():
+        catalog.append(
+            {
+                "id": key,
+                **item,
+                "installed": any(name in installed_names for name in item["tool_names"]),
+            }
+        )
+    return {
+        "directory_name": VENDOR_TOOL_DIR_NAME,
+        "known_tool_names": list(VENDOR_TOOL_NAMES),
+        "roots": [str(root) for root in vendor_tool_roots()],
+        "catalog": catalog,
+        "tools": tools,
+    }
 
 
 def chrome_binary() -> str | None:
@@ -2807,6 +2924,11 @@ def reports_page() -> str:
     return render_template("index.html", active_page="reports")
 
 
+@app.route("/settings")
+def settings_page() -> str:
+    return render_template("index.html", active_page="settings")
+
+
 @app.route("/legal")
 def legal_index() -> str:
     docs = []
@@ -3166,6 +3288,38 @@ def api_compliance_profiles():
 @app.get("/api/system-tools")
 def api_system_tools():
     return jsonify(system_tool_inventory())
+
+
+@app.get("/api/vendor-tools")
+def api_vendor_tools():
+    try:
+        return jsonify(list_vendor_tools())
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 500
+
+
+@app.post("/api/vendor-tools/<tool_id>/download-info")
+def api_vendor_tool_download_info(tool_id: str):
+    payload = request.get_json(silent=True) or {}
+    if not payload.get("accepted_terms"):
+        return jsonify({"error": "You must confirm that you accept the vendor license terms before downloading."}), 400
+    item = VENDOR_TOOL_CATALOG.get(tool_id)
+    if not item:
+        return jsonify({"error": f"Unknown vendor tool: {tool_id}"}), 404
+    try:
+        root = default_vendor_tool_root()
+        root.mkdir(parents=True, exist_ok=True)
+        return jsonify(
+            {
+                "tool": {"id": tool_id, **item},
+                "download_url": item["download_url"],
+                "target_directory": str(root),
+                "expected_names": item["tool_names"],
+                "message": "Download from the vendor site, accept the vendor terms there, and place or extract the binary into the target directory.",
+            }
+        )
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 500
 
 
 @app.get("/api/enterprise/status")

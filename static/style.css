@@ -1004,6 +1004,25 @@ body[data-page="reports"] #detailView {
   display: none !important;
 }
 
+body[data-page="settings"] .layout {
+  grid-template-columns: 1fr;
+}
+
+body[data-page="settings"] .panel-list,
+body[data-page="settings"] #emptyState,
+body[data-page="settings"] #detailView,
+body[data-page="settings"] .reports-section {
+  display: none !important;
+}
+
+.settings-section {
+  display: none;
+}
+
+body[data-page="settings"] .settings-section {
+  display: grid;
+}
+
 body[data-page="test"] .erase-menu,
 body[data-page="erase"] .diagnostics-menu {
   display: none;
@@ -1014,7 +1033,11 @@ body[data-page="erase"] .erase-menu {
 }
 
 body[data-page="test"] .reports-section,
-body[data-page="erase"] .reports-section {
+body[data-page="erase"] .reports-section,
+body[data-page="dashboard"] .settings-section,
+body[data-page="test"] .settings-section,
+body[data-page="erase"] .settings-section,
+body[data-page="reports"] .settings-section {
   display: none;
 }
 

@@ -366,20 +366,51 @@ The live image is intended for direct use on test systems:
 This is especially useful when multiple internal drives need to be checked in a
 server or test machine.
 
-The `usbImage` build also includes a writable FAT32 partition intended for:
+The `usbImage` build also includes writable data partitions:
+
+`DRVPROOF` is a FAT32 partition intended for:
 - automatically exported report bundles
 - copying results to a work PC
 - direct access from Windows, macOS, and Linux
+- compatibility with simple printer kiosks and other FAT readers
 
-Current export partition details:
+Current report partition details:
 - filesystem label: `DRVPROOF`
 - size: `512 MiB`
 - report folder: `DriveProof-Reports`
 
-At runtime DriveProof mounts this partition automatically when it is present and
-writable. Finished test reports are saved there without requiring a manual
+`DRVTOOLS` is an ext4 partition intended for optional vendor RAID/HBA tools:
+- filesystem label: `DRVTOOLS`
+- size: `512 MiB`
+- tool folder: `DriveProof-Vendor-Tools`
+
+At runtime DriveProof mounts these partitions automatically when present and
+writable. Finished test reports are saved to `DRVPROOF` without requiring a manual
 export step. The web UI shows whether the report was saved or whether export
 failed.
+
+Vendor RAID/HBA tools are not redistributed with the public image. If a site is
+licensed to use tools such as `storcli`, `perccli`, `arcconf`, `ssacli`,
+`hpssacli`, or Areca CLI tools, DriveProof can show vendor download links and
+the target directory after the operator confirms that they accept the vendor
+terms. The tool binaries should be placed under:
+
+```text
+DriveProof-Vendor-Tools/
+```
+
+on a writable Linux filesystem. A Linux filesystem such as ext4, XFS, or btrfs
+is recommended because it preserves Unix permissions. The default `DRVPROOF`
+partition remains FAT32 for report exchange with Windows, macOS, printer kiosks,
+and other simple readers. The generated live USB image includes `DRVTOOLS` as
+the Linux tools partition.
+
+Vendor downloads are often archives or distro packages rather than a single
+binary. The live image includes common extraction helpers for ZIP, TAR, RPM, and
+DEB style downloads. DriveProof should only activate a tool after a
+vendor-specific adapter has found the expected binary name, copied it to the
+tools directory, marked it executable, and verified it with a version/probe
+command. It should not blindly execute vendor installers.
 
 Each finished report is exported into its own folder under:
 
@@ -460,6 +491,7 @@ Application pages:
 - `/test`: diagnostics and batch test workflow
 - `/erase`: destructive erase workflow
 - `/reports`: report archive
+- `/settings`: system tool and optional vendor controller tool setup
 - `/certificate/<report_id>`: certificate-style proof page
 
 Important notes:

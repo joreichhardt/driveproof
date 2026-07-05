@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>DriveProof</title>
     <link rel="icon" type="image/png" href="{{ url_for('static', filename='assets/driveproof-logo.png') }}">
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=20260705-nvme-sanitize1">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=20260705-vendor-settings1">
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   </head>
   <body data-page="{{ active_page or 'dashboard' }}">
@@ -25,6 +25,7 @@
             <a class="nav-link {{ 'active' if active_page == 'test' else '' }}" href="/test">Test</a>
             <a class="nav-link {{ 'active' if active_page == 'erase' else '' }}" href="/erase">Erase</a>
             <a class="nav-link {{ 'active' if active_page == 'reports' else '' }}" href="/reports">Reports</a>
+            <a class="nav-link {{ 'active' if active_page == 'settings' else '' }}" href="/settings">Settings</a>
           </nav>
           <div class="theme-switch" aria-label="Theme">
             <button id="themeSystem" class="theme-button active">System</button>
@@ -56,10 +57,6 @@
               <button id="selectAllButton" class="mini-action" type="button">All visible</button>
               <button id="clearSelectionButton" class="mini-action" type="button">Clear</button>
             </div>
-          </div>
-          <div class="system-tools-card">
-            <div class="block-label">System tools</div>
-            <div id="systemToolsList" class="system-tools-list"></div>
           </div>
           <div class="enterprise-card" id="enterpriseCard">
             <div class="enterprise-head">
@@ -200,6 +197,23 @@
               <div id="reportsList" class="reports-list"></div>
             </div>
           </div>
+
+          <div class="content-grid lower-grid settings-section">
+            <div class="panel inset">
+              <div class="section-head">
+                <h2>System tools</h2>
+                <p class="muted">Installed host tools and runtime feature probes.</p>
+              </div>
+              <div id="systemToolsList" class="system-tools-list"></div>
+            </div>
+            <div class="panel inset">
+              <div class="section-head">
+                <h2>Vendor controller tools</h2>
+                <p class="muted">Optional RAID/HBA tools are downloaded from the vendor after accepting their terms.</p>
+              </div>
+              <div id="vendorToolsList" class="system-tools-list"></div>
+            </div>
+          </div>
         </section>
       </main>
       <footer class="app-footer">
@@ -209,6 +223,6 @@
       </footer>
     </div>
 
-    <script src="{{ url_for('static', filename='app.js') }}?v=20260705-nvme-sanitize1"></script>
+    <script src="{{ url_for('static', filename='app.js') }}?v=20260705-vendor-settings1"></script>
   </body>
   </html>

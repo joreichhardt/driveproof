@@ -175,6 +175,47 @@ async function loadSystemTools() {
   }
 }
 
+async function loadVendorTools() {
+  const container = byId("vendorToolsList");
+  if (!container) return;
+  const payload = await fetchJson("/api/vendor-tools");
+  container.innerHTML = "";
+  for (const item of payload.catalog || []) {
+    const row = document.createElement("div");
+    row.className = `system-tool-row ${item.installed ? "ok" : "missing"}`;
+    row.innerHTML = `
+      <div>
+        <strong>${item.label}</strong>
+        <span>${item.installed ? "installed" : `${item.license_note} Requires a writable Linux tools partition.`}</span>
+      </div>
+      <button class="mini-action" type="button">${item.installed ? "Info" : "Get"}</button>
+    `;
+    row.querySelector("button").onclick = () => prepareVendorToolDownload(item.id);
+    container.appendChild(row);
+  }
+  if (payload.tools?.length) {
+    const installed = document.createElement("div");
+    installed.className = "empty-inline muted";
+    installed.textContent = `Detected: ${payload.tools.map((tool) => `${tool.name} at ${tool.path}`).join("; ")}`;
+    container.appendChild(installed);
+  }
+}
+
+async function prepareVendorToolDownload(toolId) {
+  const accepted = window.confirm("Open vendor download information? Continue only if you are allowed to download and use this vendor tool under its license terms.");
+  if (!accepted) return;
+  const payload = await fetchJson(`/api/vendor-tools/${toolId}/download-info`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ accepted_terms: true }),
+  });
+  window.open(payload.download_url, "_blank", "noopener");
+  byId("vendorToolsList").insertAdjacentHTML(
+    "afterbegin",
+    `<div class="empty-inline muted">Place extracted binary as ${payload.expected_names.join(" or ")} in ${payload.target_directory}</div>`
+  );
+}
+
 function renderComplianceProfiles() {
   const select = byId("complianceProfile");
   if (!select) return;
@@ -1093,6 +1134,8 @@ document.addEventListener("DOMContentLoaded", async () => {
   byId("themeLight").onclick = () => applyTheme("light");
   byId("refreshButton").onclick = async () => {
     await refreshEnterpriseStatus(true);
+    await loadSystemTools();
+    await loadVendorTools();
     await refreshDisks();
     await refreshActiveJobs();
   };
@@ -1134,6 +1177,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   bindSettings();
   await loadComplianceProfiles();
   await loadSystemTools();
+  await loadVendorTools();
   await refreshEnterpriseStatus();
   await refreshDisks();
   await refreshActiveJobs();
