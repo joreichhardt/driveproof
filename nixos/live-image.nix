@@ -299,6 +299,7 @@ in {
     path = with pkgs; [
       coreutils
       chromium
+      cryptsetup
       cups
       dpkg
       dosfstools

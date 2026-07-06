@@ -119,6 +119,18 @@ COMPLIANCE_PROFILES = {
         "description": "Maps to firmware cryptographic erase, ATA Enhanced Secure Erase, or NVMe sanitize workflows where supported.",
         "requires_erase": True,
     },
+    "bsi_con6": {
+        "label": "BSI CON.6 Erase",
+        "standard": "BSI IT-Grundschutz CON.6",
+        "description": "BSI CON.6-oriented workflow: random overwrite for HDDs and controller secure erase/sanitize for SSD/NVMe where supported, with protocol evidence in the report.",
+        "requires_erase": True,
+    },
+    "bsi_con6_crypto": {
+        "label": "BSI CON.6 Crypto Erase",
+        "standard": "BSI IT-Grundschutz CON.6 / cryptographic deletion",
+        "description": "Full logical-device encrypted overwrite with a one-time AES-XTS key, followed by key discard and protocol evidence.",
+        "requires_erase": True,
+    },
 }
 
 SYSTEM_TOOL_REQUIREMENTS = {
@@ -152,6 +164,13 @@ SYSTEM_TOOL_REQUIREMENTS = {
         "minimum_version": "2.10",
         "features": {
             "safe_remove": ["udisksctl", "--help"],
+        },
+    },
+    "cryptsetup": {
+        "package": "cryptsetup",
+        "minimum_version": "2.7",
+        "features": {
+            "plain_mode": ["cryptsetup", "--help"],
         },
     },
     "browser": {
@@ -2540,12 +2559,39 @@ def run_nvme_sanitize_erase(
     return erase_adapter.run_nvme_sanitize_erase(deps, disk, job, method=method, allow_internal=allow_internal)
 
 
+def bsi_erase_deps() -> erase_adapter.BsiEraseDeps:
+    return erase_adapter.BsiEraseDeps(
+        resolved_command=resolved_command,
+        unmount_disk_children=unmount_disk_children,
+        persist_job_state=persist_job_state,
+        verify_erase_samples=verify_erase_samples,
+        compliance_from_options=compliance_from_options,
+        format_bytes=format_bytes,
+        utc_now_iso=utc_now_iso,
+        run_command=run_command,
+        tool_path=tool_path,
+        parse_intish=parse_intish,
+        sanitize_log=nvme_sanitize_log,
+        sanitize_progress=nvme_sanitize_progress,
+    )
+
+
+def run_bsi_erase(disk: dict[str, Any], job: TestJob, allow_internal: bool = False) -> dict[str, Any]:
+    return erase_adapter.run_bsi_erase(bsi_erase_deps(), disk, job, allow_internal=allow_internal)
+
+
+def run_bsi_crypto_erase(disk: dict[str, Any], job: TestJob, allow_internal: bool = False) -> dict[str, Any]:
+    return erase_adapter.run_bsi_crypto_erase(bsi_erase_deps(), disk, job, allow_internal=allow_internal)
+
+
 def _register_mode_adapters() -> None:
     drive_modes.register_executor("quick", lambda job, disk: read_segments(disk["path"], sample_offsets(disk["size_bytes"], "quick"), job))
     drive_modes.register_executor("deep_sample", lambda job, disk: read_segments(disk["path"], sample_offsets(disk["size_bytes"], "deep_sample"), job))
     drive_modes.register_executor("smart_short", lambda job, disk: run_smart_selftest(disk["path"], job, "short"))
     drive_modes.register_executor("smart_extended", lambda job, disk: run_smart_extended_test(disk["path"], job))
     drive_modes.register_executor("full", lambda job, disk: full_read_scan(disk["path"], disk["size_bytes"], job))
+    drive_modes.register_executor("bsi_erase", lambda job, disk: run_bsi_erase(disk, job, allow_internal=bool(job.options.get("allow_internal_erase"))))
+    drive_modes.register_executor("bsi_crypto_erase", lambda job, disk: run_bsi_crypto_erase(disk, job, allow_internal=bool(job.options.get("allow_internal_erase"))))
     drive_modes.register_executor("erase_zero", lambda job, disk: run_zero_erase(disk, job, allow_internal=bool(job.options.get("allow_internal_erase"))))
     drive_modes.register_executor(
         "secure_erase_ata",
@@ -2605,6 +2651,30 @@ def _register_mode_adapters() -> None:
             return drive_modes.ModeAvailability(False, "NVMe Sanitize Block Erase is not supported by this controller.")
         return drive_modes.ModeAvailability(True)
 
+    def bsi_erase_available(disk: dict[str, Any]) -> drive_modes.ModeAvailability:
+        kind = classify_disk_kind(disk)
+        if kind == "HDD":
+            return drive_modes.ModeAvailability(True, warnings=("HDD will use full-device PRNG overwrite per BSI CON.6.A12.",))
+        if kind == "NVMe":
+            caps = nvme_erase_capabilities(disk)
+            if caps.get("sanitize_block_supported") or caps.get("sanitize_crypto_supported") or caps.get("format_supported"):
+                return drive_modes.ModeAvailability(True, warnings=("NVMe will use controller sanitize/format according to reported capabilities.",))
+            return drive_modes.ModeAvailability(False, "NVMe BSI erase requires NVMe Format or Sanitize support.")
+        caps = secure_erase_capabilities(disk)
+        if caps.get("basic_supported") or caps.get("enhanced_supported"):
+            return drive_modes.ModeAvailability(True, warnings=("SSD will use ATA Secure Erase because host overwrite is unreliable with wear-leveling.",))
+        return drive_modes.ModeAvailability(False, "SSD BSI erase requires ATA Secure Erase support.")
+
+    def bsi_crypto_available(disk: dict[str, Any]) -> drive_modes.ModeAvailability:
+        if not tool_path("cryptsetup"):
+            return drive_modes.ModeAvailability(False, "cryptsetup is not installed in this image.")
+        warnings = ["Full logical device will be encrypted with a one-time key and the key discarded."]
+        if classify_disk_kind(disk) in {"SSD", "NVMe"}:
+            warnings.append("For flash media, controller sanitize remains preferred because hidden over-provisioned pages are not addressable by host writes.")
+        return drive_modes.ModeAvailability(True, warnings=tuple(warnings))
+
+    drive_modes.register_capability_check("bsi_erase", bsi_erase_available)
+    drive_modes.register_capability_check("bsi_crypto_erase", bsi_crypto_available)
     drive_modes.register_capability_check("secure_erase_ata", ata_basic_available)
     drive_modes.register_capability_check("secure_erase_ata_enhanced", ata_enhanced_available)
     drive_modes.register_capability_check("nvme_format", nvme_format_available)
@@ -3004,6 +3074,42 @@ def api_nvme_erase_disk(device_name: str):
             {
                 "allow_internal_erase": allow_internal,
                 "nvme_erase_method": method,
+                "compliance_profile": compliance_profile,
+                "post_test_mode": post_test_mode,
+                "run_id": run_id,
+            },
+        )
+        return jsonify({"job_id": job_id})
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 500
+
+
+@app.post("/api/disks/<device_name>/bsi-erase")
+def api_bsi_erase_disk(device_name: str):
+    payload = request.get_json(silent=True) or {}
+    allow_internal = bool(payload.get("allow_internal"))
+    variant = (payload.get("variant") or "auto").strip().lower()
+    compliance_profile = payload.get("compliance_profile") or ("bsi_con6_crypto" if variant == "crypto" else "bsi_con6")
+    run_id = (payload.get("run_id") or "").strip() or None
+    post_test_mode = (payload.get("post_test_mode") or "").strip() or None
+    if post_test_mode and post_test_mode not in drive_modes.post_erase_test_modes():
+        return jsonify({"error": "post_test_mode must be quick, deep_sample, smart_short, smart_extended, or full"}), 400
+    if variant not in {"auto", "crypto"}:
+        return jsonify({"error": "variant must be auto or crypto"}), 400
+    mode_id = "bsi_crypto_erase" if variant == "crypto" else "bsi_erase"
+    try:
+        disk = get_disk(device_name)
+        mode_availability = drive_modes.availability(mode_id, disk, category="erase")
+        if not mode_availability.available:
+            return jsonify({"error": mode_availability.reason or "BSI erase is not available."}), 400
+        if has_active_job_for_device(device_name):
+            return jsonify({"error": "An app job is already running for this drive."}), 409
+        job_id = start_job(
+            device_name,
+            mode_id,
+            {
+                "allow_internal_erase": allow_internal,
+                "bsi_variant": variant,
                 "compliance_profile": compliance_profile,
                 "post_test_mode": post_test_mode,
                 "run_id": run_id,

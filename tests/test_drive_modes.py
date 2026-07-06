@@ -28,6 +28,14 @@ class DriveModesTest(unittest.TestCase):
         self.assertTrue(mode.requires_local_confirmation)
         self.assertFalse(mode.remote_allowed)
 
+    def test_bsi_modes_are_destructive_local_only_erase_modes(self) -> None:
+        modes = {mode["id"]: mode for mode in drive_modes.list_modes(category="erase")}
+
+        self.assertEqual(modes["bsi_erase"]["compliance_default"], "bsi_con6")
+        self.assertEqual(modes["bsi_crypto_erase"]["compliance_default"], "bsi_con6_crypto")
+        self.assertTrue(modes["bsi_erase"]["requires_local_confirmation"])
+        self.assertFalse(modes["bsi_crypto_erase"]["remote_allowed"])
+
     def test_availability_rejects_wrong_drive_kind(self) -> None:
         disk = {"transport": "sata", "rotational": True}
 

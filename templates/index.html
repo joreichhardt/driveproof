@@ -213,6 +213,8 @@
                     >Erase method</label
                   >
                   <select id="batchEraseMethod" class="select-input">
+                    <option value="bsi_auto">BSI Erase (auto)</option>
+                    <option value="bsi_crypto">BSI Crypto Erase</option>
                     <option value="zero">Single-pass zero erase</option>
                     <option value="ata_basic">ATA Secure Erase</option>
                     <option value="ata_enhanced">
@@ -378,6 +380,15 @@
                         <option value="full">Full Read</option>
                       </select>
                     </div>
+                    <button id="bsiEraseButton" class="erase-button">
+                      BSI Erase (auto)
+                    </button>
+                    <button
+                      id="bsiCryptoEraseButton"
+                      class="erase-button secondary"
+                    >
+                      BSI Crypto Erase
+                    </button>
                     <button id="eraseButton" class="erase-button">
                       Single-pass zero erase
                     </button>
@@ -527,8 +538,11 @@
               <div class="section-head">
                 <h2>Vendor controller tools</h2>
                 <p class="muted">
-                  Optional RAID/HBA tools are downloaded from the vendor after
-                  accepting their terms. Downloads are saved to DRVTOOLS
+                  First try to switch hardware RAID controllers to HBA, IT,
+                  JBOD, or passthrough mode so DriveProof can see the physical
+                  drives directly. Use vendor RAID/HBA tools only when direct
+                  passthrough is not possible or when controller-specific
+                  diagnostics are required. Downloads are saved to DRVTOOLS
                   automatically in the live system.
                 </p>
               </div>

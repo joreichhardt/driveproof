@@ -5,6 +5,7 @@
 `DriveProof` is a Linux- and NixOS-oriented alternative to CrystalDiskInfo and GSmartControl for structured testing of used HDDs, SSDs, and NVMe drives before resale.
 
 The focus is not just SMART visibility, but a credible resale workflow:
+
 - detect drives automatically
 - offer matching tests based on drive type
 - test multiple drives in parallel
@@ -29,13 +30,15 @@ Latest public live image:
 
 - `0.0.1b`
 - architecture: `amd64` / `x86_64`
-- OneDrive release folder: https://1drv.ms/f/c/8aa757f365d1fa83/IgAhoc92SZjpQqaPkGKHmod_AWk7fpZ1zPRKHlDMnKImvPM
+- OneDrive release folder: <https://1drv.ms/f/c/8aa757f365d1fa83/IgAhoc92SZjpQqaPkGKHmod_AWk7fpZ1zPRKHlDMnKImvPM>
 
 Included files:
+
 - `driveproof-live-usb.img`
 - `driveproof-live-usb.img.sha256`
 
 Architecture note:
+
 - current live builds target `amd64` / `x86_64`
 - this means standard 64-bit Intel and AMD PCs and servers
 - ARM systems are not supported by this image
@@ -86,6 +89,7 @@ devices and uses Linux tooling such as `lsblk`, `udisksctl`, `smartctl`,
 `hdparm`, and `nvme`.
 
 Requirements:
+
 - Python 3.11+
 - `smartmontools` for SMART data and SMART self-tests
 - `util-linux` for block-device helpers such as `lsblk`
@@ -134,6 +138,7 @@ Native local execution on Windows or macOS is not supported yet. DriveProof is
 currently designed around Linux block-device APIs and Linux command-line tools.
 
 Recommended options on Windows and macOS:
+
 - boot the target machine with the DriveProof NixOS Live USB image
 - use the bootable `driveproof-live-usb.img` when you want the built-in FAT32
   report export partition
@@ -223,6 +228,7 @@ or `NVMe` device. The UI then adapts the available diagnostics and safety
 options to the detected device type and exposed controller capabilities.
 
 Detection is used for:
+
 - choosing sensible default test options for HDDs, SSDs, and NVMe drives
 - showing SMART self-test options only when they are usable
 - detecting externally running SMART self-tests
@@ -237,10 +243,12 @@ DriveProof shows firmware erase options only after capability checks pass.
 ## Nix Build
 
 The project includes Nix builds for:
+
 - a live `ISO`
 - a bootable `USB disk image` with a pre-created FAT32 export partition
 
 Requirements:
+
 - a working `nix` installation with Flakes enabled
 
 ## Makefile Shortcuts
@@ -351,6 +359,7 @@ nix build .#usbImageFast
 ## NixOS Live USB
 
 The live image is intended for direct use on test systems:
+
 - boot from USB
 - automatic Flask app start
 - automatic Chromium launch in kiosk mode
@@ -362,6 +371,7 @@ server or test machine.
 The `usbImage` build also includes writable data partitions:
 
 `DRVPROOF` is a FAT32 partition intended for:
+
 - automatically exported report bundles
 - copying results to a work PC
 - direct access from Windows, macOS, and Linux
@@ -369,12 +379,14 @@ The `usbImage` build also includes writable data partitions:
 - optional static network configuration
 
 Current report partition details:
+
 - filesystem label: `DRVPROOF`
 - size: `512 MiB`
 - report folder: `DriveProof-Reports`
 - network config file: `driveproof-network.conf`
 
 `DRVTOOLS` is an ext4 partition intended for optional vendor RAID/HBA tools:
+
 - filesystem label: `DRVTOOLS`
 - size: `512 MiB`
 - tool folder: `DriveProof-Vendor-Tools`
@@ -416,11 +428,19 @@ On boot, the live system reads `driveproof-network.conf` from `DRVPROOF` and
 applies it to the first Ethernet interface through NetworkManager. If the file
 is absent or empty, DHCP remains the default.
 
+Before using vendor controller tools, first try to switch hardware RAID
+controllers to **HBA**, **IT**, **JBOD**, or **passthrough** mode in the
+controller firmware. DriveProof produces the strongest per-drive evidence when
+Linux sees each physical HDD/SSD/NVMe device directly. Logical RAID volumes can
+hide the individual disks, serials, SMART data, and erase capabilities.
+
 Vendor RAID/HBA tools are not redistributed with the public image. If a site is
 licensed to use tools such as `storcli`, `perccli`, `arcconf`, `ssacli`,
 `hpssacli`, or Areca CLI tools, DriveProof can show vendor download links and
 the target directory after the operator confirms that they accept the vendor
-terms. The downloaded vendor archive/package is saved under:
+terms. Use these tools when passthrough/HBA mode is not possible, when the
+controller needs to be reconfigured, or when controller-specific diagnostics are
+required. The downloaded vendor archive/package is saved under:
 
 ```text
 DriveProof-Vendor-Tools/Downloads/
@@ -452,11 +472,13 @@ DriveProof-Reports/<model>_<serial>/<timestamp>_<type>_<model>_<serial>_<report-
 ```
 
 Every report bundle contains:
+
 - `report.pdf`
 - `report.json`
 - `manifest.json`
 
 Erase report bundles additionally contain:
+
 - `certificate.json`
 - `audit-chain.json`
 - `public-key.pem`
@@ -476,11 +498,13 @@ active. Internal drives remain protected unless internal erase is explicitly
 enabled.
 
 DriveProof distinguishes software overwrite from firmware erase:
+
 - software overwrite writes to the block device from the live system
 - firmware erase asks the drive firmware to erase itself through ATA security
   commands when the command path is available
 
 Available erase modes:
+
 - `Single-pass zero erase`: writes zeros over the whole block device with `dd`
 - `ATA Secure Erase`: firmware-based erase using `hdparm --security-erase`
   when the drive exposes ATA security support
@@ -508,6 +532,7 @@ offers only methods that `nvme-cli` and the controller report as available, and
 records the chosen method in the report.
 
 Drive type handling:
+
 - HDDs are detected and offered HDD-oriented read tests plus ATA firmware erase
   checks where applicable.
 - SATA SSDs are detected and can use ATA Secure Erase when the firmware and
@@ -519,18 +544,22 @@ Drive type handling:
   normal Linux block/SCSI stack when the kernel exposes the physical drives.
   The live image includes `lsscsi` and `sg3_utils` for additional SCSI/SAS
   diagnostics.
-- Hardware RAID controllers may expose only logical volumes. Physical-drive
-  SMART access behind MegaRAID, HP Smart Array, Areca, 3ware, and similar
-  controllers is controller-specific and may require explicit `smartctl -d ...`
-  parameters or vendor tools. DriveProof should mark unsupported RAID logical
-  volumes as limited evidence rather than pretending they are individual disks.
+- Hardware RAID controllers may expose only logical volumes. Prefer changing the
+  controller to HBA/IT/JBOD/passthrough mode before testing or erasing so the
+  physical drives are exposed directly. Physical-drive SMART access behind
+  MegaRAID, HP Smart Array, Areca, 3ware, and similar controllers is
+  controller-specific and may require explicit `smartctl -d ...` parameters or
+  vendor tools. DriveProof should mark unsupported RAID logical volumes as
+  limited evidence rather than pretending they are individual disks.
 
 Compliance/report profiles:
+
 - `Resale Basic`: SMART and read-test evidence for selling used drives
 - `NIST SP 800-88 Clear`: intended for overwrite or firmware erase workflows
 - `NIST SP 800-88 Purge`: intended for enhanced firmware or cryptographic erase workflows where supported
 
 Reports include:
+
 - selected compliance profile
 - erase/test method
 - device identity and serial number where available
@@ -541,6 +570,7 @@ Reports include:
 - export bundle verification at `/api/reports/<report_id>/verify-export`
 
 Application pages:
+
 - `/`: dashboard
 - `/test`: diagnostics and batch test workflow
 - `/erase`: destructive erase workflow
@@ -549,6 +579,7 @@ Application pages:
 - `/certificate/<report_id>`: certificate-style proof page
 
 Important notes:
+
 - ATA Secure Erase support depends on the drive, controller, and USB/SATA adapter.
 - Many USB docks do not pass ATA security commands through.
 - SATA SSDs can use ATA Secure Erase when their firmware and adapter expose it.
@@ -578,11 +609,13 @@ If you want a pre-created writable export partition on the same stick, use
 `driveproof-live-usb.img` and flash that directly.
 
 Architecture:
+
 - the current image is `amd64` / `x86_64`
 - use it on standard 64-bit Intel or AMD machines
 - it is not intended for ARM-based systems
 
 Recommended image choice:
+
 - `driveproof-live-usb.img`: recommended for real testing workflows, because it
   already includes a writable FAT32 export partition
 - `driveproof-live.iso`: useful for VM boot, optical media style workflows, or
@@ -668,6 +701,7 @@ be several GiB. For this project the preferred public artifact is the raw
 and users can flash it directly without unpacking.
 
 Practical options:
+
 - publish the current public build through external hosting
 - host the raw USB image externally
 - keep only the source on GitHub and build locally or in CI
@@ -676,6 +710,7 @@ Practical options:
 
 DriveProof is not a 1:1 clone of CrystalDiskInfo or GSmartControl. It is better
 described as a Linux- and NixOS-oriented resale and batch-testing interface for:
+
 - SMART checks
 - drive testing
 - resale reports
@@ -718,4 +753,4 @@ Details:
 
 If DriveProof is useful to you, you can support the project here:
 
-- https://buymeacoffee.com/joreichhardt
+- <https://buymeacoffee.com/joreichhardt>

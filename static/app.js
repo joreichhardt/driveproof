@@ -39,6 +39,9 @@ const MODE_HINTS = {
 	smart_extended:
 		"Real SMART Extended self-test executed by the drive. Credible for resale.",
 	full: "Full read test. Takes longer and provides the strongest read-test claim for resale.",
+	bsi_erase: "BSI CON.6-oriented erase. Destructive.",
+	bsi_crypto_erase:
+		"Full-device encryption with one-time key discard. Destructive.",
 	erase_zero: "Single-pass zero write. Destructive.",
 	secure_erase_ata: "ATA Secure Erase. Destructive.",
 	secure_erase_ata_enhanced: "ATA Enhanced Secure Erase. Destructive.",
@@ -54,6 +57,8 @@ const MODE_LABELS = {
 	smart_short: "SMART Short",
 	smart_extended: "SMART Extended",
 	full: "Full Read",
+	bsi_erase: "BSI Erase",
+	bsi_crypto_erase: "BSI Crypto Erase",
 	erase_zero: "Zero Erase",
 	secure_erase_ata: "ATA Secure Erase",
 	secure_erase_ata_enhanced: "ATA Enhanced Secure Erase",
@@ -449,6 +454,10 @@ function updateRunButtonLabel() {
 		targets.some((disk) => disk.internal) && !state.settings.allowInternalErase;
 	byId("runTestButton").textContent =
 		count > 1 ? `Run test on ${count} drives` : "Run test";
+	byId("bsiEraseButton").textContent =
+		count > 1 ? `BSI erase ${count} drives` : "BSI Erase (auto)";
+	byId("bsiCryptoEraseButton").textContent =
+		count > 1 ? `BSI crypto erase ${count} drives` : "BSI Crypto Erase";
 	byId("eraseButton").textContent =
 		count > 1 ? `Zero erase ${count} drives` : "Single-pass zero erase";
 	setTextIfPresent(
@@ -665,6 +674,10 @@ function setControlsBusy() {
 		state.selectedDisk?.internal && !state.settings.allowInternalErase;
 	byId("runTestButton").disabled = !runnableTargets.length;
 	byId("safeRemoveButton").disabled = deviceBusy;
+	byId("bsiEraseButton").disabled =
+		appBusy || !state.settings.enableDestructive || internalEraseBlocked;
+	byId("bsiCryptoEraseButton").disabled =
+		appBusy || !state.settings.enableDestructive || internalEraseBlocked;
 	byId("eraseButton").disabled =
 		appBusy || !state.settings.enableDestructive || internalEraseBlocked;
 	byId("secureEraseButton").disabled =
@@ -1862,6 +1875,51 @@ async function abortExternalSelftest() {
 	}
 }
 
+async function bsiEraseSelectedDisk(variant = "auto") {
+	const targets = testTargetDisks().filter((disk) => !hasAppJob(disk.name));
+	if (!targets.length) {
+		setOperationStatus("No selectable drives without an active app job.");
+		return;
+	}
+	const runId =
+		targets.length > 1 ? newRunId("batch-bsi-erase") : newRunId("bsi-erase");
+	const started = [];
+	const failed = [];
+	for (const disk of targets) {
+		try {
+			const payload = await fetchJson(`/api/disks/${disk.name}/bsi-erase`, {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({
+					allow_internal: state.settings.allowInternalErase,
+					variant,
+					compliance_profile:
+						variant === "crypto" ? "bsi_con6_crypto" : "bsi_con6",
+					run_id: runId,
+					...postErasePayload(),
+				}),
+			});
+			started.push({ disk, jobId: payload.job_id });
+		} catch (error) {
+			failed.push(`${disk.name}: ${error.message}`);
+		}
+	}
+	const selectedStarted =
+		started.find((item) => item.disk.name === state.selectedDisk?.name) ||
+		started[0];
+	if (selectedStarted) state.currentJobId = selectedStarted.jobId;
+	await refreshActiveJobs();
+	if (state.currentJobId) pollSelectedJob();
+	setOperationStatus(
+		[
+			`started ${started.length} BSI erase job${started.length === 1 ? "" : "s"}`,
+			failed.length ? `failed: ${failed.join("; ")}` : "",
+		]
+			.filter(Boolean)
+			.join(" · "),
+	);
+}
+
 async function eraseSelectedDisk() {
 	const targets = testTargetDisks().filter((disk) => !hasAppJob(disk.name));
 	if (!targets.length) {
@@ -1994,7 +2052,9 @@ async function nvmeEraseSelectedDisk(method = "format") {
 }
 
 async function runBatchErase() {
-	const method = byId("batchEraseMethod")?.value || "zero";
+	const method = byId("batchEraseMethod")?.value || "bsi_auto";
+	if (method === "bsi_auto") return bsiEraseSelectedDisk("auto");
+	if (method === "bsi_crypto") return bsiEraseSelectedDisk("crypto");
 	if (method === "zero") return eraseSelectedDisk();
 	if (method === "ata_basic") return secureEraseSelectedDisk("basic");
 	if (method === "ata_enhanced") return secureEraseSelectedDisk("enhanced");
@@ -2163,6 +2223,16 @@ document.addEventListener("DOMContentLoaded", async () => {
 		});
 	byId("safeRemoveButton").onclick = () => safeRemoveSelectedDisk();
 	byId("abortSelftestButton").onclick = () => abortExternalSelftest();
+	byId("bsiEraseButton").onclick = () =>
+		bsiEraseSelectedDisk("auto").catch((error) => {
+			setOperationStatus(`BSI erase error · ${error.message}`);
+			setControlsBusy();
+		});
+	byId("bsiCryptoEraseButton").onclick = () =>
+		bsiEraseSelectedDisk("crypto").catch((error) => {
+			setOperationStatus(`BSI crypto erase error · ${error.message}`);
+			setControlsBusy();
+		});
 	byId("eraseButton").onclick = () =>
 		eraseSelectedDisk().catch((error) => {
 			setOperationStatus(`erase error · ${error.message}`);
