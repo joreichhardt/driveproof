@@ -1,32 +1,71 @@
 <!doctype html>
 <html lang="en">
   <head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>DriveProof</title>
-    <link rel="icon" type="image/png" href="{{ url_for('static', filename='assets/driveproof-logo.png') }}">
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=20260705-combined-flow1">
+    <link
+      rel="icon"
+      type="image/png"
+      href="{{ url_for('static', filename='assets/driveproof-logo.png') }}"
+    />
+    <link
+      rel="stylesheet"
+      href="{{ url_for('static', filename='style.css') }}?v=20260705-combined-flow1"
+    />
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   </head>
-  <body data-page="{{ active_page or 'drives' }}" data-device="{{ selected_device or '' }}">
+  <body
+    data-page="{{ active_page or 'drives' }}"
+    data-device="{{ selected_device or '' }}"
+  >
     <div class="app-shell">
       <header class="topbar">
         <div class="brand-block">
-          <img class="brand-logo" src="{{ url_for('static', filename='assets/driveproof-logo.png') }}" alt="DriveProof logo">
+          <img
+            class="brand-logo"
+            src="{{ url_for('static', filename='assets/driveproof-logo.png') }}"
+            alt="DriveProof logo"
+          />
           <div>
             <p class="eyebrow">Drive Diagnostics</p>
             <h1>DriveProof</h1>
-            <p class="topbar-copy">SMART diagnostics, read tests, and resale reports for HDDs, SSDs, and NVMe drives.</p>
+            <p class="topbar-copy">
+              SMART diagnostics, read tests, and resale reports for HDDs, SSDs,
+              and NVMe drives.
+            </p>
           </div>
         </div>
         <div class="topbar-actions">
           <nav class="app-nav" aria-label="Main navigation">
-            <a class="nav-link {{ 'active' if active_page in ['drives', 'device'] else '' }}" href="/">Drives</a>
-            <a class="nav-link {{ 'active' if active_page == 'jobs' else '' }}" href="/jobs">Jobs</a>
-            <a class="nav-link {{ 'active' if active_page == 'reports' else '' }}" href="/reports">Reports</a>
-            <a class="nav-link {{ 'active' if active_page == 'settings' else '' }}" href="/settings">Settings</a>
+            <a
+              class="nav-link {{ 'active' if active_page in ['drives', 'device'] else '' }}"
+              href="/"
+              >Drives</a
+            >
+            <a
+              class="nav-link {{ 'active' if active_page == 'jobs' else '' }}"
+              href="/jobs"
+              >Jobs
+              <span id="topbarJobsBadge" class="nav-badge hidden">0</span></a
+            >
+            <a
+              class="nav-link {{ 'active' if active_page == 'reports' else '' }}"
+              href="/reports"
+              >Reports</a
+            >
+            <a
+              class="nav-link {{ 'active' if active_page == 'settings' else '' }}"
+              href="/settings"
+              >Settings</a
+            >
           </nav>
-          <button id="topbarNetworkStatus" class="network-chip" type="button" title="Open network settings">
+          <button
+            id="topbarNetworkStatus"
+            class="network-chip"
+            type="button"
+            title="Open network settings"
+          >
             <span id="topbarNetworkMode">DHCP</span>
             <strong id="topbarNetworkAddress">No IPv4</strong>
           </button>
@@ -45,83 +84,173 @@
             <h2>Drives</h2>
             <p id="envHint" class="muted"></p>
           </div>
-          <div class="settings-box compact">
-            <label class="check-row">
-              <input id="showInternalDisks" type="checkbox">
-              <span>Show internal drives</span>
+          <div
+            id="driveDashboardSummary"
+            class="drive-dashboard-summary"
+            aria-live="polite"
+          ></div>
+          <div
+            class="drive-toolbar"
+            aria-label="Drive filters and safety controls"
+          >
+            <div class="toolbar-group">
+              <label class="field-label" for="driveFilter">Filter</label>
+              <select id="driveFilter" class="select-input compact-input">
+                <option value="all">All drives</option>
+                <option value="HDD">HDD</option>
+                <option value="SSD">SSD</option>
+                <option value="NVMe">NVMe</option>
+                <option value="warnings">Warnings</option>
+                <option value="active">Active jobs</option>
+              </select>
+            </div>
+            <div class="toolbar-group">
+              <label class="field-label" for="driveSort">Sort</label>
+              <select id="driveSort" class="select-input compact-input">
+                <option value="path">Path</option>
+                <option value="health">Health</option>
+                <option value="kind">Type</option>
+                <option value="capacity">Capacity</option>
+              </select>
+            </div>
+            <div class="segmented-control" aria-label="Drive view">
+              <button
+                id="driveViewCards"
+                class="theme-button active"
+                type="button"
+              >
+                Cards
+              </button>
+              <button id="driveViewList" class="theme-button" type="button">
+                List
+              </button>
+            </div>
+            <label class="check-row internal-drive-toggle">
+              <input id="showInternalDisks" type="checkbox" />
+              <span>Show installed/server drives</span>
             </label>
+            <p class="safety-note">
+              Installed drives may contain the host OS or customer data. Erase
+              stays locked until explicitly enabled.
+            </p>
           </div>
           <div class="batch-controls" aria-label="Batch drive selection">
             <div class="block-label">Batch selection</div>
             <div class="batch-button-grid">
-              <button id="selectHddButton" class="mini-action" type="button">All HDD</button>
-              <button id="selectSsdButton" class="mini-action" type="button">All SSD</button>
-              <button id="selectNvmeButton" class="mini-action" type="button">All NVMe</button>
-              <button id="selectAllButton" class="mini-action" type="button">All visible</button>
-              <button id="clearSelectionButton" class="mini-action" type="button">Clear</button>
+              <button id="selectHddButton" class="mini-action" type="button">
+                All HDD
+              </button>
+              <button id="selectSsdButton" class="mini-action" type="button">
+                All SSD
+              </button>
+              <button id="selectNvmeButton" class="mini-action" type="button">
+                All NVMe
+              </button>
+              <button id="selectAllButton" class="mini-action" type="button">
+                All visible
+              </button>
+              <button
+                id="clearSelectionButton"
+                class="mini-action"
+                type="button"
+              >
+                Clear
+              </button>
             </div>
           </div>
-          <div class="batch-actions-card">
-            <button id="toggleBatchActionsButton" class="batch-tile" type="button">
+          <div class="batch-actions-card sticky-batch-bar">
+            <div class="batch-action-row">
               <span class="drive-stack-graphic" aria-hidden="true">
                 <span></span>
                 <span></span>
                 <span></span>
               </span>
-              <span>
+              <div class="batch-action-copy">
                 <strong>Batch actions</strong>
-                <small>Test, erase, or erase + test selected drives.</small>
-              </span>
-            </button>
-            <div id="batchActionsPanel" class="batch-actions-panel hidden">
-              <div class="section-head">
-                <h2>Batch job</h2>
-                <p id="batchSelectionSummary" class="muted">No drives selected.</p>
+                <small id="batchSelectionSummary">No drives selected.</small>
               </div>
-              <label class="field-label" for="batchTestMode">Test mode</label>
-              <select id="batchTestMode" class="select-input">
+              <label class="field-label inline-field" for="batchTestMode"
+                >Test</label
+              >
+              <select id="batchTestMode" class="select-input compact-input">
                 <option value="quick">Quick</option>
                 <option value="deep_sample">Deep Sample</option>
                 <option value="smart_short">SMART Short</option>
                 <option value="smart_extended">SMART Extended</option>
                 <option value="full">Full Read</option>
               </select>
-              <button id="batchRunTestButton" class="run-button" type="button">Run batch test</button>
-              <details class="tool-menu batch-erase-menu">
+              <button id="batchRunTestButton" class="run-button" type="button">
+                Run batch test
+              </button>
+              <button
+                id="toggleBatchActionsButton"
+                class="erase-button secondary"
+                type="button"
+              >
+                Erase setup…
+              </button>
+            </div>
+            <div id="batchActionsPanel" class="batch-actions-panel hidden">
+              <div class="section-head danger-section-head">
+                <h2>Destructive batch erase</h2>
+                <p class="muted">
+                  Erase requires explicit unlocks. Internal/server drives need
+                  the additional internal-drive approval.
+                </p>
+              </div>
+              <details class="tool-menu batch-erase-menu" open>
                 <summary>Erase & combined workflow</summary>
                 <label class="check-row">
-                  <input id="batchEnableDestructive" type="checkbox">
-                  <span>Enable erase functions</span>
+                  <input id="batchEnableDestructive" type="checkbox" />
+                  <span>Enable destructive erase functions</span>
                 </label>
                 <label class="check-row">
-                  <input id="batchAllowInternalErase" type="checkbox">
-                  <span>Allow erase on internal drives</span>
+                  <input id="batchAllowInternalErase" type="checkbox" />
+                  <span>Allow erase on installed/server drives</span>
                 </label>
                 <div id="batchDangerZone" class="danger-zone hidden">
-                  <label class="field-label" for="batchEraseMethod">Erase method</label>
+                  <label class="field-label" for="batchEraseMethod"
+                    >Erase method</label
+                  >
                   <select id="batchEraseMethod" class="select-input">
                     <option value="zero">Single-pass zero erase</option>
                     <option value="ata_basic">ATA Secure Erase</option>
-                    <option value="ata_enhanced">ATA Enhanced Secure Erase</option>
+                    <option value="ata_enhanced">
+                      ATA Enhanced Secure Erase
+                    </option>
                     <option value="nvme_format">NVMe Format Erase</option>
-                    <option value="nvme_sanitize_crypto">NVMe Sanitize Crypto</option>
-                    <option value="nvme_sanitize_block">NVMe Sanitize Block</option>
+                    <option value="nvme_sanitize_crypto">
+                      NVMe Sanitize Crypto
+                    </option>
+                    <option value="nvme_sanitize_block">
+                      NVMe Sanitize Block
+                    </option>
                   </select>
                   <label class="check-row">
-                    <input id="batchPostEraseTestEnabled" type="checkbox">
+                    <input id="batchPostEraseTestEnabled" type="checkbox" />
                     <span>Run test after erase</span>
                   </label>
-                  <label class="field-label" for="batchPostEraseTestMode">Post-erase test</label>
+                  <label class="field-label" for="batchPostEraseTestMode"
+                    >Post-erase test</label
+                  >
                   <select id="batchPostEraseTestMode" class="select-input">
                     <option value="quick">Quick</option>
                     <option value="smart_short">SMART Short</option>
                     <option value="smart_extended">SMART Extended</option>
                     <option value="full">Full Read</option>
                   </select>
-                  <button id="batchRunEraseButton" class="erase-button" type="button">Run batch erase</button>
+                  <button
+                    id="batchRunEraseButton"
+                    class="erase-button"
+                    type="button"
+                  >
+                    Run batch erase
+                  </button>
                 </div>
               </details>
-              <div id="batchActionStatus" class="job-box muted">Select drives and choose an action.</div>
+              <div id="batchActionStatus" class="job-box muted">
+                Select drives and choose an action.
+              </div>
             </div>
           </div>
           <div id="diskList" class="disk-list"></div>
@@ -134,7 +263,13 @@
           </div>
 
           <div id="detailView" class="hidden">
-            <button id="backToDrivesButton" class="mini-action back-button" type="button">Back to drives</button>
+            <button
+              id="backToDrivesButton"
+              class="mini-action back-button"
+              type="button"
+            >
+              Back to drives
+            </button>
             <div class="diagnostic-header">
               <div class="disk-identity">
                 <p class="eyebrow">Drive information</p>
@@ -160,18 +295,28 @@
                   <div class="test-block">
                     <div class="block-label">Test selection</div>
                     <div id="testSelector" class="test-selector"></div>
-                    <div id="testModeHint" class="muted">Short sample read test for initial sorting.</div>
+                    <div id="testModeHint" class="muted">
+                      Short sample read test for initial sorting.
+                    </div>
                   </div>
                   <div class="stack-buttons">
-                    <button id="runTestButton" class="run-button">Run test</button>
-                    <button id="safeRemoveButton" class="safe-remove-button">Safely remove</button>
+                    <button id="runTestButton" class="run-button">
+                      Run test
+                    </button>
+                    <button id="safeRemoveButton" class="safe-remove-button">
+                      Safely remove
+                    </button>
                   </div>
                 </details>
                 <details class="tool-menu compliance-menu" open>
                   <summary>Compliance & audit</summary>
-                  <label class="field-label" for="complianceProfile">Report profile</label>
+                  <label class="field-label" for="complianceProfile"
+                    >Report profile</label
+                  >
                   <select id="complianceProfile" class="select-input"></select>
-                  <div id="complianceProfileHint" class="muted">Resale diagnostic report.</div>
+                  <div id="complianceProfileHint" class="muted">
+                    Resale diagnostic report.
+                  </div>
                 </details>
                 <div class="job-panel">
                   <div class="job-panel-head">
@@ -179,33 +324,53 @@
                     <span id="jobPercent" class="job-percent">0%</span>
                   </div>
                   <div class="progress-track">
-                    <div id="jobProgressBar" class="progress-bar" style="width: 0%"></div>
+                    <div
+                      id="jobProgressBar"
+                      class="progress-bar"
+                      style="width: 0%"
+                    ></div>
                   </div>
-                  <div id="jobStatus" class="job-box muted">No test started yet.</div>
+                  <div id="jobStatus" class="job-box muted">
+                    No test started yet.
+                  </div>
                 </div>
-                <div id="externalSelftestBox" class="job-box muted hidden"></div>
-                <button id="abortSelftestButton" class="safe-remove-button hidden">Abort SMART self-test</button>
+                <div
+                  id="externalSelftestBox"
+                  class="job-box muted hidden"
+                ></div>
+                <button
+                  id="abortSelftestButton"
+                  class="safe-remove-button hidden"
+                >
+                  Abort SMART self-test
+                </button>
                 <details class="tool-menu erase-menu" open>
                   <summary>Erase & destruction</summary>
                   <div class="settings-box">
                     <label class="check-row">
-                      <input id="enableDestructive" type="checkbox">
-                      <span>Enable erase functions</span>
+                      <input id="enableDestructive" type="checkbox" />
+                      <span>Enable destructive erase functions</span>
                     </label>
                     <label class="check-row">
-                      <input id="allowInternalErase" type="checkbox">
-                      <span>Allow erase on internal drives</span>
+                      <input id="allowInternalErase" type="checkbox" />
+                      <span>Allow erase on installed/server drives</span>
                     </label>
                   </div>
                   <div id="dangerZone" class="danger-zone hidden">
                     <div class="danger-title">Destructive erase</div>
-                    <div class="muted">Erase applies to the selected batch drives, or to the currently selected drive if no batch is selected. Erase reports include a certificate; test reports stay separate.</div>
+                    <div class="danger-copy">
+                      Erase applies to the selected batch drives, or to the
+                      currently selected drive if no batch is selected. Erase
+                      reports include a certificate; test reports stay separate.
+                    </div>
                     <div class="settings-box compact">
                       <label class="check-row">
-                        <input id="postEraseTestEnabled" type="checkbox">
+                        <input id="postEraseTestEnabled" type="checkbox" />
                         <span>Run test after erase</span>
                       </label>
-                      <label class="field-label" for="postEraseTestMode">Post-erase test</label>
+                      <label class="field-label" for="postEraseTestMode"
+                        >Post-erase test</label
+                      >
                       <select id="postEraseTestMode" class="select-input">
                         <option value="quick">Quick</option>
                         <option value="smart_short">SMART Short</option>
@@ -213,14 +378,48 @@
                         <option value="full">Full Read</option>
                       </select>
                     </div>
-                    <button id="eraseButton" class="erase-button">Single-pass zero erase</button>
-                    <div id="secureEraseHint" class="muted">Checking ATA Secure Erase support.</div>
-                    <button id="secureEraseButton" class="erase-button secondary">ATA Secure Erase</button>
-                    <button id="enhancedSecureEraseButton" class="erase-button secondary">ATA Enhanced Secure Erase</button>
-                    <div id="nvmeEraseHint" class="muted">Checking NVMe erase support.</div>
-                    <button id="nvmeEraseButton" class="erase-button secondary" disabled>NVMe Format Erase</button>
-                    <button id="nvmeSanitizeCryptoButton" class="erase-button secondary" disabled>NVMe Sanitize Crypto</button>
-                    <button id="nvmeSanitizeBlockButton" class="erase-button secondary" disabled>NVMe Sanitize Block</button>
+                    <button id="eraseButton" class="erase-button">
+                      Single-pass zero erase
+                    </button>
+                    <div id="secureEraseHint" class="muted">
+                      Checking ATA Secure Erase support.
+                    </div>
+                    <button
+                      id="secureEraseButton"
+                      class="erase-button secondary"
+                    >
+                      ATA Secure Erase
+                    </button>
+                    <button
+                      id="enhancedSecureEraseButton"
+                      class="erase-button secondary"
+                    >
+                      ATA Enhanced Secure Erase
+                    </button>
+                    <div id="nvmeEraseHint" class="muted">
+                      Checking NVMe erase support.
+                    </div>
+                    <button
+                      id="nvmeEraseButton"
+                      class="erase-button secondary"
+                      disabled
+                    >
+                      NVMe Format Erase
+                    </button>
+                    <button
+                      id="nvmeSanitizeCryptoButton"
+                      class="erase-button secondary"
+                      disabled
+                    >
+                      NVMe Sanitize Crypto
+                    </button>
+                    <button
+                      id="nvmeSanitizeBlockButton"
+                      class="erase-button secondary"
+                      disabled
+                    >
+                      NVMe Sanitize Block
+                    </button>
                   </div>
                 </details>
               </div>
@@ -256,7 +455,10 @@
             <div class="panel inset">
               <div class="section-head">
                 <h2>Running jobs</h2>
-                <p class="muted">All currently active DriveProof and detected SMART self-test jobs.</p>
+                <p class="muted">
+                  All currently active DriveProof and detected SMART self-test
+                  jobs.
+                </p>
               </div>
               <div id="activeJobsList" class="active-jobs-list"></div>
             </div>
@@ -266,33 +468,69 @@
             <div class="panel inset">
               <div class="section-head">
                 <h2>Network</h2>
-                <p class="muted">DHCP is used by default. Save static values to the FAT report partition when no DHCP server is available.</p>
+                <p class="muted">
+                  DHCP is used by default. Save static values to the FAT report
+                  partition when no DHCP server is available.
+                </p>
               </div>
               <form id="networkConfigForm" class="settings-form">
-                <label class="field-label" for="networkIp">IP address / prefix</label>
-                <input id="networkIp" class="confirm-input" type="text" placeholder="192.168.1.50/24">
+                <label class="field-label" for="networkIp"
+                  >IP address / prefix</label
+                >
+                <input
+                  id="networkIp"
+                  class="confirm-input"
+                  type="text"
+                  placeholder="192.168.1.50/24"
+                />
                 <label class="field-label" for="networkGw">Gateway</label>
-                <input id="networkGw" class="confirm-input" type="text" placeholder="192.168.1.1">
+                <input
+                  id="networkGw"
+                  class="confirm-input"
+                  type="text"
+                  placeholder="192.168.1.1"
+                />
                 <label class="field-label" for="networkDns">DNS</label>
-                <input id="networkDns" class="confirm-input" type="text" placeholder="1.1.1.1,8.8.8.8">
+                <input
+                  id="networkDns"
+                  class="confirm-input"
+                  type="text"
+                  placeholder="1.1.1.1,8.8.8.8"
+                />
                 <div class="stack-buttons">
-                  <button class="run-button" type="submit">Save network config</button>
-                  <button id="clearNetworkConfigButton" class="safe-remove-button" type="button">Use DHCP</button>
+                  <button class="run-button" type="submit">
+                    Save network config
+                  </button>
+                  <button
+                    id="clearNetworkConfigButton"
+                    class="safe-remove-button"
+                    type="button"
+                  >
+                    Use DHCP
+                  </button>
                 </div>
-                <div id="networkConfigStatus" class="job-box muted">Loading network config.</div>
+                <div id="networkConfigStatus" class="job-box muted">
+                  Loading network config.
+                </div>
               </form>
             </div>
             <div class="panel inset">
               <div class="section-head">
                 <h2>System tools</h2>
-                <p class="muted">Installed host tools and runtime feature probes.</p>
+                <p class="muted">
+                  Installed host tools and runtime feature probes.
+                </p>
               </div>
               <div id="systemToolsList" class="system-tools-list"></div>
             </div>
             <div class="panel inset">
               <div class="section-head">
                 <h2>Vendor controller tools</h2>
-                <p class="muted">Optional RAID/HBA tools are downloaded from the vendor after accepting their terms. Downloads are saved to DRVTOOLS automatically in the live system.</p>
+                <p class="muted">
+                  Optional RAID/HBA tools are downloaded from the vendor after
+                  accepting their terms. Downloads are saved to DRVTOOLS
+                  automatically in the live system.
+                </p>
               </div>
               <div id="vendorToolsList" class="system-tools-list"></div>
             </div>
@@ -308,4 +546,4 @@
 
     <script src="{{ url_for('static', filename='app.js') }}?v=20260705-combined-flow1"></script>
   </body>
-  </html>
+</html>

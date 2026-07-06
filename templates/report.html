@@ -31,8 +31,7 @@
           <a class="icon-button legal-back-link" href="/certificate/{{ report.report_id }}">Certificate</a>
           {% endif %}
           <a class="icon-button legal-back-link" href="/report/{{ report.report_id }}/pdf">Download PDF</a>
-          <button id="printReportButton" class="icon-button legal-back-link" type="button">Print</button>
-          <button class="icon-button legal-back-link" onclick="window.print()">Save as PDF</button>
+          <button class="icon-button legal-back-link" type="button" onclick="window.print()">Print / Save PDF</button>
         </div>
       </header>
 
@@ -218,39 +217,9 @@
       </footer>
     </main>
     <script>
-      document.getElementById("printReportButton")?.addEventListener("click", async () => {
-        const button = document.getElementById("printReportButton");
-        const previous = button.textContent;
-        try {
-          button.disabled = true;
-          button.textContent = "Loading printers";
-          const payload = await fetch("/api/printers").then((response) => response.json());
-          const printers = payload.printers || [];
-          if (!printers.length) {
-            alert("No CUPS printers found. Configure an IPP/AirPrint or USB printer first.");
-            return;
-          }
-          const names = printers.map((printer) => printer.name);
-          const selected = names.length === 1
-            ? names[0]
-            : prompt(`Printer name:\n${names.join("\n")}`, names[0]);
-          if (!selected) return;
-          button.textContent = "Printing";
-          const response = await fetch("/api/reports/{{ report.report_id }}/print", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ printer: selected }),
-          });
-          const result = await response.json();
-          if (!response.ok) throw new Error(result.error || "Print failed");
-          alert(result.message || `Print job submitted to ${selected}.`);
-        } catch (error) {
-          alert(`Print error: ${error.message}`);
-        } finally {
-          button.disabled = false;
-          button.textContent = previous;
-        }
-      });
+      if (new URLSearchParams(window.location.search).get("print") === "1") {
+        window.addEventListener("load", () => setTimeout(() => window.print(), 250));
+      }
     </script>
   </body>
   </html>

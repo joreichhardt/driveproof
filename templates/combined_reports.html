@@ -21,15 +21,25 @@
         <div class="report-actions">
           <a class="icon-button legal-back-link" href="/reports">Back to reports</a>
           <a class="icon-button legal-back-link" href="/report-run/{{ run_id }}/pdf">Download combined PDF</a>
+          <button class="icon-button legal-back-link" type="button" onclick="window.print()">Print / Save PDF</button>
         </div>
       </header>
       <section class="panel inset">
         <h2>Included reports</h2>
-        <div class="reports-list">
+        <div class="included-report-list">
           {% for report in reports %}
-          <div class="report-link">
-            {{ report.device.path }} | {{ report.device.vendor }} {{ report.device.model }} | Serial {{ report.overview.serial }} | {{ report.report_kind_label }} | {{ report.report_id }}
+          <div class="included-report-row">
+            <div>
+              <strong>{{ report.device.vendor or '' }} {{ report.device.model or report.device.path or 'Unknown drive' }}</strong>
+              <span>{{ report.device.path or 'unknown device' }} | Serial {{ report.overview.serial or report.device.serial or 'n/a' }}</span>
+            </div>
+            <div class="included-report-meta">
+              <span class="report-kind-pill {{ 'erase' if report.report_kind == 'erase' else 'test' }}">{{ report.report_kind_label or 'Report' }}</span>
+              <code>{{ report.report_id }}</code>
+            </div>
           </div>
+          {% else %}
+          <div class="job-box muted">No reports are included in this run.</div>
           {% endfor %}
         </div>
       </section>
@@ -180,5 +190,10 @@
       </footer>
     </main>
     {% endfor %}
+    <script>
+      if (new URLSearchParams(window.location.search).get("print") === "1") {
+        window.addEventListener("load", () => setTimeout(() => window.print(), 250));
+      }
+    </script>
   </body>
 </html>

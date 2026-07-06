@@ -1,0 +1,10 @@
+{
+  "include": ["."],
+  "exclude": [".venv", "build", "dist", "release", ".pi", ".pi-subagents"],
+  "executionEnvironments": [
+    {
+      "root": ".",
+      "extraPaths": ["."]
+    }
+  ]
+}

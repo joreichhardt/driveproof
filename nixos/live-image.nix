@@ -23,6 +23,8 @@ let
       pkgs.chromium
       pkgs.openbox
       pkgs.xterm
+      pkgs.xorg.xdpyinfo
+      pkgs.xorg.xrandr
       pkgs.xorg.xsetroot
       pkgs.xorg.xset
     ];
@@ -66,8 +68,22 @@ let
         }
       }
 EOF
+      screen_geometry=$(xrandr --current 2>/dev/null | awk '/\*/ { print $1; exit }')
+      screen_width=$(printf '%s' "$screen_geometry" | cut -dx -f1)
+      screen_height=$(printf '%s' "$screen_geometry" | cut -dx -f2)
+      if [ -z "$screen_width" ] || [ -z "$screen_height" ]; then
+        screen_geometry=$(xdpyinfo 2>/dev/null | awk '/dimensions:/ { print $2; exit }')
+        screen_width=$(printf '%s' "$screen_geometry" | cut -dx -f1)
+        screen_height=$(printf '%s' "$screen_geometry" | cut -dx -f2)
+      fi
+      screen_width=''${screen_width:-1920}
+      screen_height=''${screen_height:-1080}
+
       exec chromium \
         --kiosk \
+        --start-fullscreen \
+        --window-position=0,0 \
+        --window-size="$screen_width,$screen_height" \
         --no-first-run \
         --noerrdialogs \
         --disable-gpu \
@@ -305,7 +321,10 @@ in {
       RestartSec = 2;
       StateDirectory = "driveproof";
       WorkingDirectory = appSrc;
-      Environment = "DRIVEPROOF_STATE_DIR=/var/lib/driveproof";
+      Environment = [
+        "DRIVEPROOF_STATE_DIR=/var/lib/driveproof"
+        "DRIVEPROOF_BIND_HOST=0.0.0.0"
+      ];
       ExecStart = "${pythonEnv}/bin/python ${appSrc}/app.py";
     };
   };

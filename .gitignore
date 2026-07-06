@@ -7,6 +7,8 @@ reports/
 driveproof-signing.key
 driveproof-signing.legacy
 driveproof-web.log
+.pi/
+.pi-subagents/
 release/
 build/
 dist/
