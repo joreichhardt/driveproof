@@ -2,16 +2,13 @@
 
 [![Buy Me a Coffee](https://img.shields.io/badge/Buy%20Me%20a%20Coffee-support-ffdd00?logo=buymeacoffee&logoColor=000000)](https://buymeacoffee.com/joreichhardt)
 
-`DriveProof` is a Linux- and NixOS-oriented alternative to CrystalDiskInfo and GSmartControl for structured testing of used HDDs, SSDs, and NVMe drives before resale.
+`DriveProof` is a Linux- and NixOS-oriented workshop appliance for structured testing and documented erasure of used HDDs, SSDs, and NVMe drives before resale, reuse, or disposal.
 
-The focus is not just SMART visibility, but a credible resale workflow:
+The focus is split between two equal workflows:
 
-- detect drives automatically
-- offer matching tests based on drive type
-- test multiple drives in parallel
-- recover running jobs after reloads
-- generate resale-friendly reports
-- boot directly from a NixOS live USB in kiosk mode
+- **testing**: detect drives automatically, run drive-type-specific diagnostics, keep running jobs visible, and generate resale-friendly health/read reports
+- **erasure**: perform explicit local erase workflows, choose media-appropriate HDD/SSD/NVMe erase methods, and generate signed erase certificates with protocol evidence
+- boot directly from a NixOS live USB in kiosk mode for server-room and workshop use
 
 ## Project Scope
 
@@ -52,10 +49,12 @@ sha256sum -c driveproof-live-usb.img.sha256
 ## Purpose
 
 DriveProof is built for workshop, inventory, and server scenarios where multiple
-drives need to be checked one after another or in parallel without first setting
-up a full desktop environment.
+drives need to be tested, erased, and documented one after another or in
+parallel without first setting up a full desktop environment.
 
 ## Features
+
+Testing workflow:
 
 - SMART evaluation via `smartctl`
 - human-readable SMART attribute table
@@ -69,17 +68,25 @@ up a full desktop environment.
 - persistent job database for reloads and restarts
 - detection of externally started SMART self-tests
 - safe removal
-- optional destructive erase functions with explicit safety unlocks
-- firmware-based ATA Secure Erase and ATA Enhanced Secure Erase when supported
-  by the drive and controller
+
+Erase workflow:
+
+- destructive erase functions hidden behind explicit safety unlocks
+- BSI IT-Grundschutz CON.6-oriented erase mode with media-specific method selection
+- BSI Crypto Erase mode: full logical-device encrypted overwrite with one-time AES-XTS key discard
+- firmware-based ATA Secure Erase and ATA Enhanced Secure Erase when supported by the drive and controller
+- NVMe Format and NVMe Sanitize modes when reported by the controller
+- optional combined erase-then-test workflow with separate erase and test reports
+- Ed25519-signed DriveProof certificates for erase reports
+
+Reporting and appliance workflow:
+
 - printable browser reports with DriveProof logo and GitHub QR code
 - direct PDF download from each report
 - automatic PDF and JSON report export to the live USB FAT32 partition
-- compliance-oriented report profiles for resale, NIST Clear, and NIST Purge workflows
+- compliance-oriented report profiles for resale, BSI CON.6, NIST Clear, and NIST Purge workflows
 - report SHA-256 fingerprint and basic audit trail for stronger resale evidence
-- dedicated pages for testing, erasure, reports, and generated certificates
-- Ed25519-signed DriveProof certificates for erase reports
-- optional combined erase-then-test workflow with separate erase and test reports
+- dedicated pages for testing, erasure, reports, generated certificates, and settings
 - NixOS live image with automatic app start and Chromium kiosk mode
 
 ## Local Run on Ubuntu/Debian
@@ -505,6 +512,20 @@ DriveProof distinguishes software overwrite from firmware erase:
 
 Available erase modes:
 
+- `BSI Erase (auto)`: BSI IT-Grundschutz CON.6-oriented workflow that selects
+  the erase method based on media type and reported capabilities:
+  - HDD: full-device pseudo-random overwrite with sampled verification
+  - SATA SSD: ATA Secure Erase or ATA Enhanced Secure Erase when exposed by the
+    drive/controller, because host overwrites cannot reliably address hidden
+    flash pages behind wear-leveling
+  - NVMe: NVMe Sanitize Block preferred, then NVMe Sanitize Crypto, then NVMe
+    Format NVM secure erase as fallback when those capabilities are reported
+- `BSI Crypto Erase`: opens the complete logical device through a one-time
+  AES-XTS mapping, overwrites the mapped device, closes the mapping, overwrites
+  and deletes the key material, and records ciphertext samples plus the
+  non-secret key fingerprint. For SSD/NVMe, controller sanitize remains the
+  stronger choice where available because host writes cannot address all
+  over-provisioned flash areas.
 - `Single-pass zero erase`: writes zeros over the whole block device with `dd`
 - `ATA Secure Erase`: firmware-based erase using `hdparm --security-erase`
   when the drive exposes ATA security support
@@ -531,15 +552,39 @@ across the affected media according to the drive's implementation. DriveProof
 offers only methods that `nvme-cli` and the controller report as available, and
 records the chosen method in the report.
 
+### BSI erase protocol evidence
+
+DriveProof maps the BSI option to the public BSI IT-Grundschutz-Kompendium
+Edition 2023, Baustein `CON.6 Löschen und Vernichten`. The report labels the
+result as **CON.6-aligned**, not as third-party certification. The software can
+record the technical evidence, while the operator's organization remains
+responsible for policy, protection needs, retention rules, and process approval.
+
+For BSI erase reports and certificates, DriveProof records:
+
+- selected BSI profile, policy, conformity label, and referenced CON.6 controls
+- device path, drive kind, model/serial where available, and size
+- selected method, tool, command output/status, and controller capability evidence
+- start/completion timestamps, byte counts, throughput, and job status
+- verification evidence such as PRNG sample matches, ciphertext sample hashes,
+  firmware/controller completion status, or sanitize logs
+- signed report/certificate metadata: report hash, audit-chain hash, manifest
+  hash/signature, and public verification endpoint
+
 Drive type handling:
 
-- HDDs are detected and offered HDD-oriented read tests plus ATA firmware erase
-  checks where applicable.
+- HDDs are detected and offered HDD-oriented read tests plus full-device
+  overwrite and firmware erase checks where applicable. The BSI auto mode uses a
+  pseudo-random overwrite for HDDs.
 - SATA SSDs are detected and can use ATA Secure Erase when the firmware and
-  controller expose the required ATA security commands.
+  controller expose the required ATA security commands. The BSI auto mode avoids
+  ordinary host overwrite for SSDs because wear-leveling and spare blocks can
+  leave stale data outside the logical address range.
 - NVMe drives are detected and tested with NVMe-aware health/SMART data.
   `nvme-cli` is included in the live image. Format and Sanitize methods are
-  offered only when the controller and CLI report the required capabilities.
+  offered only when the controller and CLI report the required capabilities. The
+  BSI auto mode prefers Sanitize Block, then Sanitize Crypto, then Format NVM
+  secure erase fallback.
 - SAS/SATA drives behind HBAs in IT/JBOD mode are expected to work through the
   normal Linux block/SCSI stack when the kernel exposes the physical drives.
   The live image includes `lsscsi` and `sg3_utils` for additional SCSI/SAS
@@ -555,6 +600,10 @@ Drive type handling:
 Compliance/report profiles:
 
 - `Resale Basic`: SMART and read-test evidence for selling used drives
+- `BSI CON.6 Erase`: BSI IT-Grundschutz CON.6-oriented erase workflow with
+  per-media method selection and protocol evidence
+- `BSI CON.6 Crypto Erase`: full logical-device encryption with one-time key
+  discard, protocol evidence, and ciphertext samples
 - `NIST SP 800-88 Clear`: intended for overwrite or firmware erase workflows
 - `NIST SP 800-88 Purge`: intended for enhanced firmware or cryptographic erase workflows where supported
 
@@ -583,9 +632,18 @@ Important notes:
 - ATA Secure Erase support depends on the drive, controller, and USB/SATA adapter.
 - Many USB docks do not pass ATA security commands through.
 - SATA SSDs can use ATA Secure Erase when their firmware and adapter expose it.
-- NVMe drives are detected and tested. `nvme-cli` is included in the live image. NVMe Format and Sanitize are offered only when the controller reports the required capabilities.
-- DriveProof reports are resale evidence, not a replacement for a certified erasure platform such as Blancco unless your own process validates and accepts the workflow.
-- FAT32 itself is not tamper-proof. Integrity comes from the signed manifest and certificate, not from the filesystem.
+- NVMe drives are detected and tested. `nvme-cli` is included in the live image.
+  NVMe Format and Sanitize are offered only when the controller reports the
+  required capabilities.
+- BSI erase reports are technical protocol evidence aligned with BSI
+  IT-Grundschutz CON.6. They do not replace an organization's deletion policy,
+  protection-needs assessment, retention/legal review, or accredited third-party
+  certification.
+- DriveProof reports are resale and erasure evidence, not a replacement for a
+  certified erasure platform such as Blancco unless your own process validates
+  and accepts the workflow.
+- FAT32 itself is not tamper-proof. Integrity comes from the signed manifest and
+  certificate, not from the filesystem.
 - The PDF file is not currently a native digitally signed PDF. Instead, the PDF is covered by the signed bundle manifest.
 - Cloud verification, key custody policies, and third-party accreditation are future steps.
 
@@ -595,9 +653,9 @@ DriveProof can be used commercially under its open-source license. Commercial
 services can include custom branding, customer-specific NixOS images, validated
 USB/SATA/NVMe hardware setups, prepared boot media, and paid support.
 
-DriveProof reports are intended as practical resale evidence. They are not a
-substitute for a certified erasure process unless your own organization validates
-and accepts the workflow.
+DriveProof reports are intended as practical resale and erasure evidence. They
+are not a substitute for a certified erasure process unless your own organization
+validates and accepts the workflow.
 
 ## Create a Bootable USB Stick
 
